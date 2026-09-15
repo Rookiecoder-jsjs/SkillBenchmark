@@ -121,9 +121,9 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
 }
 
 export class CodexAdapter extends SubprocessRunnerAdapter {
-  constructor(command = "codex") { super("codex", command, "codex", (prompt, model) => ["exec", "--json", "--ephemeral", "--ignore-user-config", "--model", model, prompt]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "coexistence"); }
+  constructor(command = "codex") { super("codex", command, "codex", (prompt, model) => ["exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", ...(model && model !== "default" ? ["--model", model] : []), prompt]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "coexistence"); }
 }
 
 export class ClaudeCodeAdapter extends SubprocessRunnerAdapter {
-  constructor(command = "claude") { super("claude-code", command, "claude-code", (prompt, model, context) => ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--model", model, ...(context?.mode === "native" && context.environment.skill_path ? ["--plugin-dir", context.environment.skill_path] : [])]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "native", "coexistence"); }
+  constructor(command = "claude") { super("claude-code", command, "claude-code", (prompt, model, context) => ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(model && model !== "default" ? ["--model", model] : []), ...(context?.mode === "native" && context.environment.skill_path ? ["--plugin-dir", context.environment.skill_path] : [])]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "native", "coexistence"); }
 }
