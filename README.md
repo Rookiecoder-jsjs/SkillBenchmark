@@ -48,7 +48,7 @@ npm test
 npm run demo
 ```
 
-`npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json` 和 `report.md` 写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
+`npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json`、`report.md`、`report.html` 和 SQLite 索引写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
 
 也可以对自己的 Suite 生成计划或运行 mock 评测：
 

@@ -43,6 +43,11 @@ export interface SuiteSnapshot {
   metric_policy: string;
 }
 
+export interface SuiteDiagnostics {
+  errors: { code: string; message: string; task_ids?: string[] }[];
+  warnings: { code: string; message: string }[];
+}
+
 export interface RunnerProfile {
   profile_id: string;
   platform: string;

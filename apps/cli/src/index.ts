@@ -1,10 +1,10 @@
-import { resolve } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { createRunPlan } from "../../../packages/core/src/plan.ts";
 import { executePlan } from "../../../packages/core/src/pipeline.ts";
 import { importSkillSnapshot } from "../../../packages/core/src/snapshot.ts";
 import { loadSuite } from "../../../packages/core/src/suite.ts";
 import { writeRunArtifacts } from "../../../packages/core/src/storage.ts";
+import { SqliteStore } from "../../../packages/core/src/storage.ts";
 
 const root = resolve(import.meta.dirname, "../../../");
 const demoSuite = resolve(root, "suites/smoke/suite.json");
@@ -13,8 +13,10 @@ const usage = `SkillBenchmark v0.1\n\n用法:\n  npm run demo                   
 async function run(suitePath: string, outputDir: string): Promise<void> {
   const suite = await loadSuite(suitePath);
   const plan = createRunPlan(suite, { repeats: 1 });
-  const report = executePlan(suite, plan);
+  const store = new SqliteStore(join(outputDir, "metadata.sqlite"));
+  const report = executePlan(suite, plan, store);
   await writeRunArtifacts(outputDir, plan, report);
+  store.close();
   console.log(`run=${report.run_id}`);
   for (const [condition, summary] of Object.entries(report.summary.by_condition)) console.log(`${condition}: ${summary.passed}/${summary.total} passed (${summary.success_rate === null ? "unknown" : `${(summary.success_rate * 100).toFixed(1)}%`})`);
   console.log(`报告已写入 ${outputDir}`);

@@ -1,16 +1,25 @@
 import type { RunPlan, RunReport, SuiteSnapshot, TrialResult } from "../../contracts/src/types.ts";
+import type { SqliteStore } from "./storage.ts";
 import { executeMock } from "./mock-runner.ts";
 import { gradeTrial } from "./grader.ts";
 
-export function executePlan(suite: SuiteSnapshot, plan: RunPlan): RunReport {
+export function executePlan(suite: SuiteSnapshot, plan: RunPlan, store?: SqliteStore): RunReport {
+  store?.savePlan(plan);
   const taskById = new Map(suite.tasks.map((task) => [task.task_id, task]));
   const results: TrialResult[] = [];
   for (const spec of plan.trials) {
+    const existing = store?.getResult(spec.trial_id);
+    if (existing) {
+      results.push(existing);
+      continue;
+    }
     const task = taskById.get(spec.task_id);
     if (!task) throw new Error(`task not found: ${spec.task_id}`);
     const publicTask = { task_id: task.task_id, prompt: task.prompt, mock_outputs: task.mock_outputs };
     const execution = executeMock(spec, publicTask);
-    results.push({ spec, receipt: execution.receipt, events: execution.events, grade: gradeTrial(spec, task, execution.receipt, execution.receipt.artifact) });
+    const result = { spec, receipt: execution.receipt, events: execution.events, grade: gradeTrial(spec, task, execution.receipt, execution.receipt.artifact) };
+    store?.saveResult(result);
+    results.push(result);
   }
   const byCondition: RunReport["summary"]["by_condition"] = {};
   for (const condition of plan.conditions) {

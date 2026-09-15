@@ -7,7 +7,7 @@
     {
       "task_id": "greeting-001",
       "family_id": "formatting",
-      "source_group": "demo",
+      "source_group": "demo-train-greeting",
       "split": "train",
       "prompt": "Return exactly the string: hello skill",
       "expected_output": "hello skill",
@@ -17,7 +17,7 @@
     {
       "task_id": "json-001",
       "family_id": "formatting",
-      "source_group": "demo",
+      "source_group": "demo-validation-json",
       "split": "validation",
       "prompt": "Return exactly the compact JSON object: {\"ok\":true}",
       "expected_output": "{\"ok\":true}",
@@ -27,7 +27,7 @@
     {
       "task_id": "regression-001",
       "family_id": "regression",
-      "source_group": "demo",
+      "source_group": "demo-train-regression",
       "split": "train",
       "prompt": "Return exactly the string: preserve behavior",
       "expected_output": "preserve behavior",

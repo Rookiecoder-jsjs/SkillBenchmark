@@ -26,6 +26,10 @@ export function executeMock(spec: TrialSpec, task: PublicTask): MockExecution {
     events.push(event(3, "trial.finished", { status: "timed_out", reason: "mock timeout" }));
     return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock timeout" } };
   }
+  if (configured === "__CANCELLED__") {
+    events.push(event(3, "trial.finished", { status: "cancelled", reason: "mock cancellation" }));
+    return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock cancellation" } };
+  }
   const artifact: Artifact = { trial_id: spec.trial_id, output: configured, output_sha256: sha256(configured) };
   events.push(event(3, "message.final", { output_ref: artifact.output_sha256, output_bytes: Buffer.byteLength(configured) }));
   events.push(event(4, "artifact.created", { digest: artifact.output_sha256 }));
