@@ -4,6 +4,9 @@ export type Split = "train" | "validation" | "test";
 export type ConditionId = "none" | "incumbent" | "candidate";
 export type TrialStatus = "completed" | "errored" | "timed_out" | "cancelled";
 export type GradeOutcome = "pass" | "fail" | "ungradable";
+export type CapabilityStatus = "verified" | "exploratory" | "unsupported";
+export type EvaluationMode = "controlled" | "native" | "coexistence";
+export type LoadMethod = "explicit-file-read" | "prompt-inline" | "native";
 
 export interface SkillSnapshot {
   schema_version: typeof SCHEMA_VERSION;
@@ -76,6 +79,8 @@ export interface RunPlan {
   budget: Budget;
   fingerprint: string;
   trials: TrialSpec[];
+  mode: EvaluationMode;
+  load_method: LoadMethod;
 }
 
 export interface TrialSpec {
@@ -94,9 +99,36 @@ export interface TraceEvent {
   trial_id: string;
   seq: number;
   timestamp: string;
-  producer: "adapter" | "grader";
+  producer: "platform" | "adapter" | "grader";
   kind: string;
   data: Record<string, unknown>;
+}
+
+export interface EnvironmentSnapshot {
+  backend: string;
+  image_digest: string;
+  tool_versions: Record<string, string>;
+  network_policy: "none" | "replay" | "live";
+  isolation_receipt: { root_dir: string; hidden_mounts: string[]; user_config_visible: boolean };
+}
+
+export interface EnvironmentHandle {
+  id: string;
+  root_dir: string;
+  workdir: string;
+  public_input_path: string;
+  skill_path: string | null;
+  background_skill_paths?: string[];
+  snapshot: EnvironmentSnapshot;
+}
+
+export interface CapabilityReport {
+  adapter: string;
+  platform: string;
+  status: CapabilityStatus;
+  version: string | null;
+  capabilities: string[];
+  evidence: string[];
 }
 
 export interface Artifact {
@@ -112,6 +144,8 @@ export interface ExecutionReceipt {
   finished_at: string;
   artifact: Artifact | null;
   failure_reason: string | null;
+  failure_kind?: "task" | "infrastructure" | "grader" | "cancelled" | null;
+  usage?: { input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null };
 }
 
 export interface Grade {
@@ -140,4 +174,73 @@ export interface RunReport {
     by_condition: Record<string, { total: number; passed: number; success_rate: number | null }>;
     contrasts: { left: ConditionId; right: ConditionId; effect: number | null; comparable_trials: number }[];
   };
+  comparisons?: ComparisonResult[];
+  gate?: GateDecision;
+}
+
+export interface ComparisonResult {
+  schema_version: typeof SCHEMA_VERSION;
+  run_id: string;
+  left: ConditionId;
+  right: ConditionId;
+  strata: string[];
+  effect: number | null;
+  interval: { lower: number; upper: number; level: number } | null;
+  regressions: { task_id: string; profile_id: string; repeat_index: number }[];
+  missingness: { missing_pairs: number; total_pairs: number };
+  profile_id?: string;
+}
+
+export interface GatePolicy {
+  min_iteration_gain: number;
+  min_iteration_ci_lower: number;
+  max_relative_none_loss: number;
+  max_missing_pair_rate: number;
+  max_key_regressions: number;
+}
+
+export interface GateDecision {
+  decision_id: string;
+  comparison_refs: string[];
+  policy: GatePolicy;
+  status: "accept" | "reject" | "inconclusive";
+  reasons: string[];
+}
+
+export interface EvidenceView {
+  schema_version: typeof SCHEMA_VERSION;
+  source_run_id: string;
+  split: "train" | "validation";
+  items: { trial_id: string; task_id: string; family_id: string; condition_id: ConditionId; status: TrialStatus; outcome: GradeOutcome; metrics: Record<string, number>; event_kinds: string[] }[];
+}
+
+export interface WikiPattern {
+  pattern_id: string;
+  revision: number;
+  scope: { split: string; families: string[] };
+  observations: string[];
+  hypotheses: string[];
+  counterexamples: string[];
+  evidence_refs: string[];
+  status: "observed" | "hypothesis" | "supported" | "contradicted" | "superseded";
+}
+
+export interface Proposal {
+  proposal_id: string;
+  parent_digest: string;
+  candidate_digest: string;
+  diff: { path: string; change: "added" | "removed" | "changed"; detail: string }[];
+  hypothesis: string;
+  evidence_refs: string[];
+  validation_status: "pending" | "accept" | "reject" | "inconclusive";
+}
+
+export interface Release {
+  release_id: string;
+  skill_digest: string;
+  evaluation_refs: string[];
+  scope: string[];
+  audit_status: "exploratory" | "verified";
+  timestamp: string;
+  status: "published" | "superseded";
 }

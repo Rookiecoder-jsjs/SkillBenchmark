@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/trace-event.schema.json",
+  "title": "TraceEvent",
+  "type": "object",
+  "required": ["schema_version", "event_id", "trial_id", "seq", "timestamp", "producer", "kind", "data"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "event_id": { "type": "string" },
+    "trial_id": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "producer": { "enum": ["platform", "adapter", "grader"] },
+    "kind": { "type": "string" },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": false
+}

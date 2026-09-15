@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-本仓库处于 P0 实现阶段。先通过 README.md 阅读设计文档，再按 docs/implementation-plan.md 的验收条件推进。当前 TypeScript 使用 Node 原生类型剥离运行，SQLite 和真实平台适配仍是后续工作。
+本仓库处于 v0.1 首版实现阶段。先通过 README.md 阅读设计文档，再按 docs/implementation-plan.md 的验收条件推进。当前 TypeScript 使用 Node 原生类型剥离运行；本地 SQLite、对象存储、真实 CLI Adapter、统计门禁、演化和发布入口已具备，生产级隔离 Worker 与真实平台一致性验证仍需运行配置。
 
 ## 目录与文档
 
@@ -27,4 +27,4 @@ PR 说明应交代问题、修改后的行为与验证结果。没有执行的�
 
 不要提交密钥、账号令牌、个人绝对路径或私有实验轨迹。配置模板只能使用占位值。演示任务与固定样例需要明确来源和可使用范围；运行产物放在独立数据目录或被忽略的本地目录。
 
-当前无需安装运行时依赖。使用 `npm test` 运行自动化测试，使用 `npm run demo` 验证本地 mock 链路；暂无真实平台发布命令。
+当前无需安装运行时依赖。使用 `npm test` 运行回归和端到端测试，使用 `npm run demo` 验证本地 mock 链路；`run-adapter`、`evolve` 和 `release` 命令需要相应的本地目录或平台 CLI。

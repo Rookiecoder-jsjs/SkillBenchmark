@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/wiki-pattern.schema.json",
+  "title": "WikiPattern",
+  "type": "object",
+  "required": ["pattern_id", "revision", "scope", "observations", "hypotheses", "counterexamples", "evidence_refs", "status"],
+  "properties": {
+    "pattern_id": { "type": "string" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "scope": { "type": "object", "required": ["split", "families"], "properties": { "split": { "type": "string" }, "families": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+    "observations": { "type": "array", "items": { "type": "string" } },
+    "hypotheses": { "type": "array", "items": { "type": "string" } },
+    "counterexamples": { "type": "array", "items": { "type": "string" } },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "status": { "enum": ["observed", "hypothesis", "supported", "contradicted", "superseded"] }
+  },
+  "additionalProperties": false
+}

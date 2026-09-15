@@ -1,6 +1,6 @@
 # 跨平台插件与执行器
 
-状态：设计草案。核对时间：2026-09-15。已验证文档和本机 CLI 帮助，不代表完成了真实平台运行或隔离验证。
+状态：首版 Adapter 已实现，真实平台运行和隔离验证仍待目标 Worker 实测。核对时间：2026-09-15。已验证文档、本机 CLI 帮助和 fake CLI 回归路径。
 
 ## 1. 兼容性分层
 
@@ -35,7 +35,7 @@ Agent Skills 使用带 SKILL.md 的目录，并允许附带脚本、参考材料
 
 管理插件发起的子实验必须创建全新被测会话，不继承当前对话。对话中展示的是 Run ID、进度和报告，批量任务不要求宿主持续在线等待。
 
-v0.1 CLI 是完整入口。插件桥接可以使用同一个 CLI；MCP 封装随后提供同样接口。MCP 工具名称、slash 命令名称和插件缓存加载行为按平台版本确认。
+v0.1 CLI 是完整入口；`apps/mcp-server` 已提供同一组核心操作的 JSON-RPC 桥接，`plugins/codex` 与 `plugins/claude-code` 提供清单。MCP 工具名称、slash 命令名称和插件缓存加载行为仍需按宿主平台版本确认。
 
 ## 4. 首批执行入口
 
@@ -66,7 +66,7 @@ v0.1 优先验证两端均能实现的 `explicit-file-read`：固定公开包路
 
 ### native
 
-按平台支持的原生机制加载插件/Skill，保持任务提示中不包含触发暗示。正例测漏触发，负例测误触发。请求原生模式而平台能力未验证时，plan 返回 unsupported；不能静默改成全文注入。
+按平台支持的原生机制加载插件/Skill，保持任务提示中不包含触发暗示。正例测漏触发，负例测误触发。请求原生模式而平台能力未验证时，Adapter/调度器返回 unsupported 或 exploratory；不能静默改成全文注入。当前 Claude Adapter 通过 `--plugin-dir` 传递 native Skill，Codex Adapter 明确不声明 native 支持。
 
 ## 6. Adapter 一致性检查
 

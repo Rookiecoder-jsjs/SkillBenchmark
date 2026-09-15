@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/release.schema.json",
+  "title": "Release",
+  "type": "object",
+  "required": ["release_id", "skill_digest", "evaluation_refs", "scope", "audit_status", "timestamp", "status"],
+  "properties": {
+    "release_id": { "type": "string" },
+    "skill_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "evaluation_refs": { "type": "array", "items": { "type": "string" } },
+    "scope": { "type": "array", "items": { "type": "string" } },
+    "audit_status": { "enum": ["exploratory", "verified"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["published", "superseded"] }
+  },
+  "additionalProperties": false
+}

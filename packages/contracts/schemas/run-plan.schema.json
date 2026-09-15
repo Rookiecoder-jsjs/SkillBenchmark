@@ -3,7 +3,7 @@
   "$id": "https://skillbenchmark.dev/schemas/run-plan.schema.json",
   "title": "RunPlan",
   "type": "object",
-  "required": ["schema_version", "run_id", "suite_id", "suite_digest", "profiles", "conditions", "repeats", "budget", "fingerprint", "trials"],
+  "required": ["schema_version", "run_id", "suite_id", "suite_digest", "profiles", "conditions", "repeats", "budget", "fingerprint", "trials", "mode", "load_method"],
   "properties": {
     "schema_version": { "const": "0.1" },
     "run_id": { "type": "string", "minLength": 1 },
@@ -14,7 +14,9 @@
     "repeats": { "type": "integer", "minimum": 1 },
     "budget": { "$ref": "#/$defs/budget" },
     "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "trials": { "type": "array", "items": { "$ref": "#/$defs/trial" } }
+    "trials": { "type": "array", "items": { "$ref": "#/$defs/trial" } },
+    "mode": { "enum": ["controlled", "native", "coexistence"] },
+    "load_method": { "enum": ["explicit-file-read", "prompt-inline", "native"] }
   },
   "$defs": {
     "profile": {
@@ -52,7 +54,7 @@
         "profile_id": { "type": "string" },
         "condition_id": { "enum": ["none", "incumbent", "candidate"] },
         "repeat_index": { "type": "integer", "minimum": 1 },
-        "attempt": { "const": 1 }
+        "attempt": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     }

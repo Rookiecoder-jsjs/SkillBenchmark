@@ -1,6 +1,6 @@
 # 数据与接口契约
 
-状态：v0.1 协议设计，核心类型与首批 JSON Schema 已实现。开发阶段以 `packages/contracts` 中的 JSON Schema 作为序列化契约的唯一来源；尚未实现的对象会在对应阶段补齐。
+状态：v0.1 协议与首版实现同步。核心类型和 Skill、Suite、Trial、Grade、Comparison、RunPlan、环境、Evidence、Proposal、Gate、Release、RunnerProfile JSON Schema 已实现；后续兼容字段需提升协议版本并保留历史证据。
 
 ## 1. 通用规则
 

@@ -1,0 +1,8 @@
+{
+  "name": "skillbenchmark-claude-code",
+  "version": "0.1.0",
+  "platform": "claude-code",
+  "entrypoint": "npm run skillbenchmark --",
+  "workflows": ["evaluate", "report", "evolve", "publish"],
+  "isolation": "delegates to the configured SkillBenchmark worker"
+}

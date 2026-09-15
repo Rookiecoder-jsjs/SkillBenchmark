@@ -20,15 +20,15 @@ export function executeMock(spec: TrialSpec, task: PublicTask): MockExecution {
   events.push(event(2, "skill.provisioned", { condition_id: spec.condition_id, method: "mock", exposure: spec.condition_id === "none" ? "absent" : "available", load_observation: "unverified" }));
   if (configured === "__INFRA_ERROR__") {
     events.push(event(3, "trial.finished", { status: "errored", reason: "mock infrastructure failure" }));
-    return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock infrastructure failure" } };
+    return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock infrastructure failure", failure_kind: "infrastructure" } };
   }
   if (configured === "__TIMEOUT__") {
     events.push(event(3, "trial.finished", { status: "timed_out", reason: "mock timeout" }));
-    return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock timeout" } };
+    return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock timeout", failure_kind: "task" } };
   }
   if (configured === "__CANCELLED__") {
     events.push(event(3, "trial.finished", { status: "cancelled", reason: "mock cancellation" }));
-    return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock cancellation" } };
+    return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: now(), artifact: null, failure_reason: "mock cancellation", failure_kind: "cancelled" } };
   }
   const artifact: Artifact = { trial_id: spec.trial_id, output: configured, output_sha256: sha256(configured) };
   events.push(event(3, "message.final", { output_ref: artifact.output_sha256, output_bytes: Buffer.byteLength(configured) }));

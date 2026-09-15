@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/execution-receipt.schema.json",
+  "title": "ExecutionReceipt",
+  "type": "object",
+  "required": ["trial_id", "status", "started_at", "finished_at", "artifact", "failure_reason"],
+  "properties": {
+    "trial_id": { "type": "string" },
+    "status": { "enum": ["completed", "errored", "timed_out", "cancelled"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "artifact": { "type": ["object", "null"] },
+    "failure_reason": { "type": ["string", "null"] },
+    "failure_kind": { "type": ["string", "null"], "enum": ["task", "infrastructure", "grader", "cancelled", null] },
+    "usage": { "type": ["object", "null"] }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/environment-snapshot.schema.json",
+  "title": "EnvironmentSnapshot",
+  "type": "object",
+  "required": ["backend", "image_digest", "tool_versions", "network_policy", "isolation_receipt"],
+  "properties": {
+    "backend": { "type": "string" },
+    "image_digest": { "type": "string" },
+    "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+    "network_policy": { "enum": ["none", "replay", "live"] },
+    "isolation_receipt": { "type": "object", "required": ["root_dir", "hidden_mounts", "user_config_visible"], "properties": { "root_dir": { "type": "string" }, "hidden_mounts": { "type": "array", "items": { "type": "string" } }, "user_config_visible": { "type": "boolean" } }, "additionalProperties": false }
+  },
+  "additionalProperties": false
+}

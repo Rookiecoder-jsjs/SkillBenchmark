@@ -1,6 +1,6 @@
 # SkillBenchmark：跨平台 Skill 评测与迭代
 
-状态：架构草案 v0.1，2026-09-15。SkillLab 是工作名称，尚未确定最终产品名。
+状态：v0.1 首版工程实现，2026-09-15。SkillLab 是工作名称，尚未确定最终产品名。
 
 仓库名称为 `SkillBenchmark`；设计文档中的 `SkillLab` 和 `skilllab` 分别表示产品工作名与拟定 CLI 名称。
 
@@ -37,7 +37,7 @@
 - Wiki 保存可追溯的观察、假设和实验结果；评分与发布由确定性程序决定。
 - 自动迭代产生候选版本；显式发布到本地注册表，导出到日常使用平台是另一个动作。
 
-当前已交付 P0 的本地 mock 链路：`plan → execute(mock) → grade → report`。它用于验证契约、产物和回归检查，不代表真实平台或模型的测评结果；Codex/Claude 执行器、插件安装包和真实测评仍未实现。
+当前已交付 P0-P4 的本地首版链路：`plan → execute → grade → compare/gate → report`，并提供 Codex/Claude CLI Adapter、训练证据/Wiki/候选、发布注册表、平台导出、回滚和 MCP 桥接。mock 与 fake CLI 只用于工程验证，不代表真实平台或模型的测评结果；真实平台运行的能力状态默认为 exploratory，需在固定 Worker、认证和模型配置下单独完成一致性验证后才能作为正式成绩依据。
 
 ## 快速开始
 
@@ -56,7 +56,22 @@ npm run demo
 npm run skillbenchmark -- plan suites/smoke/suite.json .skillbenchmark/runs/plan
 npm run skillbenchmark -- run suites/smoke/suite.json .skillbenchmark/runs/custom
 npm run skillbenchmark -- snapshot path/to/skill
+npm run skillbenchmark -- skill import path/to/skill
+npm run skillbenchmark -- suite import suites/smoke/suite.json
 ```
+
+真实 CLI Adapter、演化和发布入口：
+
+```bash
+npm run skillbenchmark -- profile inspect codex
+npm run skillbenchmark -- run-adapter codex suites/smoke/suite.json path/to/skill .skillbenchmark/runs/codex
+npm run skillbenchmark -- evolve suites/smoke/suite.json path/to/skill .skillbenchmark/evolution/latest
+npm run skillbenchmark -- release publish path/to/skill gate.json .skillbenchmark/registry
+npm run skillbenchmark -- release export .skillbenchmark/registry <release-id> claude-code ./exported-skill
+npm run skillbenchmark -- release rollback .skillbenchmark/registry <release-id>
+```
+
+`run-adapter` 会先探测本机 CLI；可用 `SKILLBENCHMARK_CODEX_COMMAND` 或 `SKILLBENCHMARK_CLAUDE_COMMAND` 指向测试替身。Codex 当前支持 controlled/coexistence，Claude Code 另支持 native；未通过真实一致性检查的能力会保持 exploratory。
 
 ## 参与开发
 

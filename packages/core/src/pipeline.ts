@@ -3,24 +3,7 @@ import type { SqliteStore } from "./storage.ts";
 import { executeMock } from "./mock-runner.ts";
 import { gradeTrial } from "./grader.ts";
 
-export function executePlan(suite: SuiteSnapshot, plan: RunPlan, store?: SqliteStore): RunReport {
-  store?.savePlan(plan);
-  const taskById = new Map(suite.tasks.map((task) => [task.task_id, task]));
-  const results: TrialResult[] = [];
-  for (const spec of plan.trials) {
-    const existing = store?.getResult(spec.trial_id);
-    if (existing) {
-      results.push(existing);
-      continue;
-    }
-    const task = taskById.get(spec.task_id);
-    if (!task) throw new Error(`task not found: ${spec.task_id}`);
-    const publicTask = { task_id: task.task_id, prompt: task.prompt, mock_outputs: task.mock_outputs };
-    const execution = executeMock(spec, publicTask);
-    const result = { spec, receipt: execution.receipt, events: execution.events, grade: gradeTrial(spec, task, execution.receipt, execution.receipt.artifact) };
-    store?.saveResult(result);
-    results.push(result);
-  }
+export function buildRunReport(plan: RunPlan, results: TrialResult[]): RunReport {
   const byCondition: RunReport["summary"]["by_condition"] = {};
   for (const condition of plan.conditions) {
     const grades = results.filter((result) => result.spec.condition_id === condition).map((result) => result.grade);
@@ -43,11 +26,37 @@ export function executePlan(suite: SuiteSnapshot, plan: RunPlan, store?: SqliteS
   return { schema_version: "0.1", run_id: plan.run_id, plan, results, summary: { by_condition: byCondition, contrasts } };
 }
 
+export function executePlan(suite: SuiteSnapshot, plan: RunPlan, store?: SqliteStore): RunReport {
+  store?.savePlan(plan);
+  const taskById = new Map(suite.tasks.map((task) => [task.task_id, task]));
+  const results: TrialResult[] = [];
+  for (const spec of plan.trials) {
+    const existing = store?.getResult(spec.trial_id);
+    if (existing) {
+      results.push(existing);
+      continue;
+    }
+    const task = taskById.get(spec.task_id);
+    if (!task) throw new Error(`task not found: ${spec.task_id}`);
+    const publicTask = { task_id: task.task_id, prompt: task.prompt, mock_outputs: task.mock_outputs };
+    const execution = executeMock(spec, publicTask);
+    const result = { spec, receipt: execution.receipt, events: execution.events, grade: gradeTrial(spec, task, execution.receipt, execution.receipt.artifact) };
+    store?.saveResult(result);
+    results.push(result);
+  }
+  return buildRunReport(plan, results);
+}
+
 export function renderMarkdown(report: RunReport): string {
   const lines = [`# SkillBenchmark 运行报告`, ``, `- Run: \`${report.run_id}\``, `- Suite: \`${report.plan.suite_id}\``, `- Fingerprint: \`${report.plan.fingerprint}\``, ``, `## 条件汇总`, ``, `| 条件 | Trial 数 | 通过数 | 成功率 |`, `| --- | ---: | ---: | ---: |`];
   for (const [condition, summary] of Object.entries(report.summary.by_condition)) lines.push(`| ${condition} | ${summary.total} | ${summary.passed} | ${summary.success_rate === null ? "unknown" : `${(summary.success_rate * 100).toFixed(1)}%`} |`);
   lines.push(``, `## 对照`, ``, `| 对照 | 增益（右 − 左） | 可比 Trial |`, `| --- | ---: | ---: |`);
   for (const contrast of report.summary.contrasts) lines.push(`| ${contrast.right} − ${contrast.left} | ${contrast.effect === null ? "unknown" : contrast.effect.toFixed(3)} | ${contrast.comparable_trials} |`);
+  if (report.comparisons?.length) {
+    lines.push(``, `## 统计区间`, ``, `| 对照 | 95% 区间 | 缺失配对 | 回归数 |`, `| --- | --- | ---: | ---: |`);
+    for (const comparison of report.comparisons) lines.push(`| ${comparison.right} − ${comparison.left} | ${comparison.interval ? `[${comparison.interval.lower.toFixed(3)}, ${comparison.interval.upper.toFixed(3)}]` : "unknown"} | ${comparison.missingness.missing_pairs}/${comparison.missingness.total_pairs} | ${comparison.regressions.length} |`);
+  }
+  if (report.gate) lines.push(``, `## Gate`, ``, `- 状态：**${report.gate.status}**`, `- 原因：${report.gate.reasons.join("；")}`);
   lines.push(``, `## 逐题结果`, ``, `| Task | 条件 | 重复 | 状态 | 结果 |`, `| --- | --- | ---: | --- | --- |`);
   for (const result of report.results) lines.push(`| ${result.spec.task_id} | ${result.spec.condition_id} | ${result.spec.repeat_index} | ${result.receipt.status} | ${result.grade.outcome} |`);
   return `${lines.join("\n")}\n`;

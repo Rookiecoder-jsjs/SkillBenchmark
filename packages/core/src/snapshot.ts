@@ -1,5 +1,5 @@
 import { lstat, readdir, readFile, readlink } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FileManifestEntry, SkillSnapshot } from "../../contracts/src/types.ts";
 import { sha256, stableJson } from "./hash.ts";
 
@@ -15,6 +15,7 @@ async function collect(root: string, current: string, entries: FileManifestEntry
     const stat = await lstat(absolute);
     if (stat.isSymbolicLink()) {
       const target = await readlink(absolute);
+      if (isAbsolute(target)) throw new Error(`external symlink (absolute target) is not allowed: ${path} -> ${target}`);
       const resolved = resolve(current, target);
       if (!isInside(root, resolved)) throw new Error(`external symlink is not allowed: ${path} -> ${target}`);
       entries.push({ path, sha256: sha256(target), bytes: Buffer.byteLength(target), executable: false, symlink: target });

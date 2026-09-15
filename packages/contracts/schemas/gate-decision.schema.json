@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/gate-decision.schema.json",
+  "title": "GateDecision",
+  "type": "object",
+  "required": ["decision_id", "comparison_refs", "policy", "status", "reasons"],
+  "properties": {
+    "decision_id": { "type": "string" },
+    "comparison_refs": { "type": "array", "items": { "type": "string" } },
+    "policy": { "type": "object", "required": ["min_iteration_gain", "min_iteration_ci_lower", "max_relative_none_loss", "max_missing_pair_rate", "max_key_regressions"], "properties": { "min_iteration_gain": { "type": "number" }, "min_iteration_ci_lower": { "type": "number" }, "max_relative_none_loss": { "type": "number" }, "max_missing_pair_rate": { "type": "number", "minimum": 0 }, "max_key_regressions": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+    "status": { "enum": ["accept", "reject", "inconclusive"] },
+    "reasons": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

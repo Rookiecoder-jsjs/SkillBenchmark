@@ -1,18 +1,20 @@
 # 实施计划与验收
 
-状态：P0 核心链路已实现，正在补齐真实执行前的工程能力。按可验证的交付物推进；阶段序号不等于固定工期。
+状态：P0-P4 首版工程链路已实现，真实平台和生产隔离验证待在目标 Worker 上执行。按可验证的交付物推进；阶段序号不等于固定工期。
 
 ## 当前实现进度
 
-已落地第一条本地可验证链路：
+已落地本地可验证闭环：
 
 - `packages/contracts` 提供 v0.1 的领域类型与 SkillSnapshot、SuiteSnapshot、RunPlan、Trial、Grade、Comparison JSON Schema。
 - `packages/core` 提供 Skill 目录快照、Suite 导入与切分检查、计划展开、确定性 mock Runner、exact-match Grader、外部 Grader 进程接口和 JSON/Markdown/HTML 报告。
 - `apps/cli` 提供 `plan`、`run`、`snapshot` 和内置 `demo` 命令。
-- `packages/core` 的 SQLite 索引保存 Run、Trial、事件、Grade 和对象元数据；相同 Run 可从已完成 Trial 恢复，避免重复事件。
-- `suites/smoke`、`tests/core.test.ts` 和 `tests/e2e.test.ts` 验证已知回归、预算边界、内容摘要变化、切分重叠、外部评分器、符号链接隔离、断点恢复和 CLI 全链路。
-
-独立内容对象存储、并发调度、基础设施重试、真实 Runner、统计区间和三态门禁仍待实现。当前 mock 结果只用于工程验证，不能作为平台或模型效果结论。
+- `packages/core` 的 SQLite 索引保存 Run、Trial、事件、Grade、比较/决策和对象元数据；相同 Run 可从已完成 Trial 恢复，避免重复事件。
+- P1 已实现本地临时 EnvironmentBackend、内容寻址对象存储、受管子进程、超时/基础设施错误分类、并发调度和基础设施重试；Codex/Claude Adapter 通过 CLI 探测并解析结构化输出。
+- P2 已实现 controlled/native/coexistence 的计划字段、加载方法、Profile 内统计和 Claude native 插件路径；Codex native 在能力不支持时明确拒绝。
+- P3 已实现 train/validation EvidenceView、Wiki 假设、父版本不变的候选快照、diff 和三态 validation gate。
+- P4 已实现本地 Registry 发布、导出收据、乐观并发检查、回滚、插件清单和 MCP JSON-RPC 桥接。
+- `tests/` 覆盖 18 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 
@@ -27,12 +29,12 @@
 | 阶段 | 交付物 | 完成条件 |
 | --- | --- | --- |
 | P0：契约与固定样例 | JSON Schema、CLI 骨架、快照存储、mock Runner、一个可判定任务包 | 无模型调用也能走通 plan → execute(mock) → grade → report；错误产物确实失败 |
-| P1：首个真实执行器 | Codex Adapter、隔离 Worker、none/v1 对照 | 独立会话、完整产物、超时/错误分类通过实测；只报告真实成绩 |
-| P2：跨平台对照 | Claude Code Adapter、Profile 内比较、三组矩阵 | 两端各自一致性检查通过，报告展示匹配条件及不支持项 |
-| P3：演化闭环 | 训练 EvidenceView、Wiki、Proposal、validation/回归门禁 | 父版本不被改动；拒绝候选保留证据；隐藏 test 不进入迭代器 |
-| P4：插件分发 | 两端管理 Skill/清单、CLI 或 MCP 桥接、版本导出 | 两端都能提交实验并查报告；操作入口上下文不污染被测会话 |
+| P1：首个真实执行器 | Codex Adapter、临时 Worker、none/v1 对照 | 代码已实现；本地 fake CLI 验证独立会话、产物、超时/错误分类。真实 Worker 和认证仍待实测 |
+| P2：跨平台对照 | Claude Code Adapter、Profile 内比较、三组矩阵 | 代码已实现并验证模式边界；两端完整一致性矩阵和真实原生触发仍待实测 |
+| P3：演化闭环 | 训练 EvidenceView、Wiki、Proposal、validation/回归门禁 | 代码与回归测试已实现；真实分析模型接入和多轮预算策略留作后续增强 |
+| P4：插件分发 | 两端管理 Skill/清单、CLI/MCP 桥接、版本导出 | 本地插件清单、MCP 工具和 Registry 已实现；宿主平台安装包发布仍需按平台打包验证 |
 
-P0/P1 使用 smoke Suite 验证工程；进入正式效果声明前增加足够任务族并校准统计政策。P3 完成前，用户已能使用完整的手工版本评测。
+P0/P1 使用 smoke Suite 验证工程；进入正式效果声明前增加足够任务族并校准统计政策。P3 已完成，用户可以使用完整的手工版本评测和候选门禁链路。
 
 ## 3. P0 可直接拆分的工作
 
@@ -81,4 +83,4 @@ P0/P1 使用 smoke Suite 验证工程；进入正式效果声明前增加足够�
 - 单次实验的时间/用量预算以及并发限制。
 - 可运行两端 CLI 的隔离 Worker 镜像及依赖锁定。
 
-未取得这些运行配置前，先完成 P0 的可校验链路，不生成虚构测评结果。
+未取得这些运行配置前，使用 mock/fake CLI 完成工程验收，不生成虚构的真实平台测评结果。

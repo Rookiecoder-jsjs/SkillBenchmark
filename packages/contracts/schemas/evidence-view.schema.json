@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/evidence-view.schema.json",
+  "title": "EvidenceView",
+  "type": "object",
+  "required": ["schema_version", "source_run_id", "split", "items"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "source_run_id": { "type": "string" },
+    "split": { "enum": ["train", "validation"] },
+    "items": { "type": "array", "items": { "type": "object", "required": ["trial_id", "task_id", "family_id", "condition_id", "status", "outcome", "metrics", "event_kinds"], "properties": { "trial_id": { "type": "string" }, "task_id": { "type": "string" }, "family_id": { "type": "string" }, "condition_id": { "enum": ["none", "incumbent", "candidate"] }, "status": { "type": "string" }, "outcome": { "enum": ["pass", "fail", "ungradable"] }, "metrics": { "type": "object" }, "event_kinds": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false } }
+  },
+  "additionalProperties": false
+}

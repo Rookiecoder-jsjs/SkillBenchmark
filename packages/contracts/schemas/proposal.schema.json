@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/proposal.schema.json",
+  "title": "Proposal",
+  "type": "object",
+  "required": ["proposal_id", "parent_digest", "candidate_digest", "diff", "hypothesis", "evidence_refs", "validation_status"],
+  "properties": {
+    "proposal_id": { "type": "string" },
+    "parent_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "candidate_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "diff": { "type": "array", "items": { "type": "object", "required": ["path", "change", "detail"], "properties": { "path": { "type": "string" }, "change": { "enum": ["added", "removed", "changed"] }, "detail": { "type": "string" } }, "additionalProperties": false } },
+    "hypothesis": { "type": "string" },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "validation_status": { "enum": ["pending", "accept", "reject", "inconclusive"] }
+  },
+  "additionalProperties": false
+}

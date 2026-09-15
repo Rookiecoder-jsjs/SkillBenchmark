@@ -9,6 +9,8 @@ import { importSkillSnapshot } from "../packages/core/src/snapshot.ts";
 import { loadSuite } from "../packages/core/src/suite.ts";
 import { SqliteStore } from "../packages/core/src/storage.ts";
 import { runExternalGrader } from "../packages/core/src/external-grader.ts";
+import { attachStatistics } from "../packages/core/src/statistics.ts";
+import { ObjectStore } from "../packages/core/src/object-store.ts";
 
 test("P0 smoke pipeline grades a known regression", async () => {
   const suite = await loadSuite("suites/smoke/suite.json");
@@ -58,6 +60,28 @@ test("external grader accepts structured Grade output", async () => {
     artifact: { output: task.expected_output, output_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
   });
   assert.equal(grade.outcome, "pass");
+});
+
+test("paired bootstrap and gate reject the known candidate regression", async () => {
+  const suite = await loadSuite("suites/smoke/suite.json");
+  const report = attachStatistics(executePlan(suite, createRunPlan(suite, { repeats: 3, runId: "run-gate" })));
+  const comparison = report.comparisons?.find((item) => item.left === "incumbent" && item.right === "candidate");
+  assert.equal(comparison?.effect, -1 / 3);
+  assert.ok(comparison?.interval && comparison.interval.lower <= comparison.effect);
+  assert.equal(report.gate?.status, "reject");
+  assert.ok(report.gate?.reasons.some((reason) => reason.includes("regression") || reason.includes("gain")));
+});
+
+test("content-addressed object store verifies and deduplicates artifacts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "skillbenchmark-objects-"));
+  const store = new ObjectStore(dir);
+  const first = store.putSync("artifact\n");
+  const second = store.putSync("artifact\n");
+  assert.equal(first.digest, second.digest);
+  assert.equal(store.getSync(first.digest).toString(), "artifact\n");
+  assert.equal(await store.has(first.digest), true);
+  await writeFile(first.path, "tampered\n");
+  assert.throws(() => store.getSync(first.digest), /integrity check failed/);
 });
 
 test("skill snapshot changes when a file changes and rejects external symlinks", async () => {

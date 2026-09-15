@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/runner-profile.schema.json",
+  "title": "RunnerProfile",
+  "type": "object",
+  "required": ["profile_id", "platform", "platform_version", "adapter_version", "model", "config_digest", "capabilities"],
+  "properties": {
+    "profile_id": { "type": "string" },
+    "platform": { "type": "string" },
+    "platform_version": { "type": "string" },
+    "adapter_version": { "type": "string" },
+    "model": { "type": "string" },
+    "config_digest": { "type": "string" },
+    "capabilities": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}
