@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/trial.schema.json",
+  "title": "TrialSpec",
+  "type": "object",
+  "required": ["schema_version", "trial_id", "run_id", "task_id", "profile_id", "condition_id", "repeat_index", "attempt"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "trial_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "profile_id": { "type": "string" },
+    "condition_id": { "enum": ["none", "incumbent", "candidate"] },
+    "repeat_index": { "type": "integer", "minimum": 1 },
+    "attempt": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

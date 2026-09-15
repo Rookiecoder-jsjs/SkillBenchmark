@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1",
+  "run_id": "demo",
+  "suite_id": "smoke",
+  "suite_digest": "not-a-sha",
+  "profiles": [],
+  "conditions": ["none"],
+  "repeats": 0,
+  "budget": { "max_trials": 0, "max_attempts": 0, "concurrency": 0, "timeout_ms": 0 },
+  "fingerprint": "not-a-sha",
+  "trials": []
+}

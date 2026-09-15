@@ -1,6 +1,17 @@
 # 实施计划与验收
 
-状态：设计提案。按可验证的交付物推进；阶段序号不等于固定工期。
+状态：P0 已开始实现。按可验证的交付物推进；阶段序号不等于固定工期。
+
+## 当前实现进度
+
+已落地第一条本地可验证链路：
+
+- `packages/contracts` 提供 v0.1 的领域类型与 SkillSnapshot、SuiteSnapshot、RunPlan、Trial、Grade、Comparison JSON Schema。
+- `packages/core` 提供 Skill 目录快照、Suite 导入、计划展开、确定性 mock Runner、exact-match Grader 和 JSON/Markdown 报告。
+- `apps/cli` 提供 `plan`、`run`、`snapshot` 和内置 `demo` 命令。
+- `suites/smoke` 与 `tests/core.test.ts` 验证已知回归、预算边界、内容摘要变化和外部符号链接拒绝。
+
+SQLite 索引、对象存储、并发调度、基础设施重试、真实 Runner 和 HTML 报告仍待实现。当前 mock 结果只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 

@@ -1,6 +1,6 @@
 # 数据与接口契约
 
-状态：v0.1 协议设计，尚未实现。示例类型用于说明模块边界；开发阶段以 `packages/contracts` 中的 JSON Schema 作为序列化契约的唯一来源。
+状态：v0.1 协议设计，核心类型与首批 JSON Schema 已实现。开发阶段以 `packages/contracts` 中的 JSON Schema 作为序列化契约的唯一来源；尚未实现的对象会在对应阶段补齐。
 
 ## 1. 通用规则
 

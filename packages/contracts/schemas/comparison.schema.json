@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/comparison.schema.json",
+  "title": "Comparison",
+  "type": "object",
+  "required": ["schema_version", "run_id", "contrast", "strata", "effect", "interval", "regressions", "missingness"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "run_id": { "type": "string" },
+    "contrast": { "type": "object", "required": ["left", "right"], "properties": { "left": { "enum": ["none", "incumbent", "candidate"] }, "right": { "enum": ["none", "incumbent", "candidate"] } }, "additionalProperties": false },
+    "strata": { "type": "array", "items": { "type": "string" } },
+    "effect": { "type": ["number", "null"] },
+    "interval": { "type": ["object", "null"], "properties": { "lower": { "type": "number" }, "upper": { "type": "number" }, "level": { "type": "number" } }, "required": ["lower", "upper", "level"], "additionalProperties": false },
+    "regressions": { "type": "array", "items": { "type": "object" } },
+    "missingness": { "type": "object", "required": ["missing_pairs", "total_pairs"], "properties": { "missing_pairs": { "type": "integer", "minimum": 0 }, "total_pairs": { "type": "integer", "minimum": 0 } }, "additionalProperties": false }
+  },
+  "additionalProperties": false
+}

@@ -37,11 +37,30 @@
 - Wiki 保存可追溯的观察、假设和实验结果；评分与发布由确定性程序决定。
 - 自动迭代产生候选版本；显式发布到本地注册表，导出到日常使用平台是另一个动作。
 
-当前交付的是架构文档。文中的 `skilllab` 命令、接口和目录布局是拟定协议，尚无可运行 CLI、插件安装包或真实测评结果。
+当前已交付 P0 的本地 mock 链路：`plan → execute(mock) → grade → report`。它用于验证契约、产物和回归检查，不代表真实平台或模型的测评结果；Codex/Claude 执行器、插件安装包和真实测评仍未实现。
+
+## 快速开始
+
+需要 Node.js 22 或更高版本（Node 原生运行当前 TypeScript 源码）：
+
+```bash
+npm test
+npm run demo
+```
+
+`npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json` 和 `report.md` 写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
+
+也可以对自己的 Suite 生成计划或运行 mock 评测：
+
+```bash
+npm run skillbenchmark -- plan suites/smoke/suite.json .skillbenchmark/runs/plan
+npm run skillbenchmark -- run suites/smoke/suite.json .skillbenchmark/runs/custom
+npm run skillbenchmark -- snapshot path/to/skill
+```
 
 ## 参与开发
 
-先阅读[贡献指南](CONTRIBUTING.md)，再按[实施计划](docs/implementation-plan.md)推进。当前无需安装依赖，没有可运行的构建或测试命令。
+先阅读[贡献指南](CONTRIBUTING.md)，再按[实施计划](docs/implementation-plan.md)推进。当前只使用 Node 内置模块，无需安装运行时依赖；`npm test` 是现有的自动化验证命令。
 
 - [AGENT.md](AGENT.md)：共享的 Agent 协作规范。
 - [AGENTS.md](AGENTS.md)：Codex 等工具的项目规则入口。

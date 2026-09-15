@@ -1,0 +1,38 @@
+{
+  "suite_id": "smoke-v0.1",
+  "label": "P0 exact-match smoke suite",
+  "split_policy": "source-group",
+  "metric_policy": "exact-match",
+  "tasks": [
+    {
+      "task_id": "greeting-001",
+      "family_id": "formatting",
+      "source_group": "demo",
+      "split": "train",
+      "prompt": "Return exactly the string: hello skill",
+      "expected_output": "hello skill",
+      "mock_outputs": { "none": "hello skill", "incumbent": "hello skill", "candidate": "hello skill" },
+      "tags": ["deterministic", "positive"]
+    },
+    {
+      "task_id": "json-001",
+      "family_id": "formatting",
+      "source_group": "demo",
+      "split": "validation",
+      "prompt": "Return exactly the compact JSON object: {\"ok\":true}",
+      "expected_output": "{\"ok\":true}",
+      "mock_outputs": { "none": "{\"ok\":true}", "incumbent": "{\"ok\":true}", "candidate": "{\"ok\":true}" },
+      "tags": ["deterministic", "positive"]
+    },
+    {
+      "task_id": "regression-001",
+      "family_id": "regression",
+      "source_group": "demo",
+      "split": "train",
+      "prompt": "Return exactly the string: preserve behavior",
+      "expected_output": "preserve behavior",
+      "mock_outputs": { "none": "preserve behavior", "incumbent": "preserve behavior", "candidate": "candidate behavior" },
+      "tags": ["deterministic", "regression"]
+    }
+  ]
+}

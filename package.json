@@ -1,0 +1,15 @@
+{
+  "name": "skillbenchmark",
+  "version": "0.1.0",
+  "private": true,
+  "description": "跨平台 Skill 评测与迭代工具",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "skillbenchmark": "node apps/cli/src/index.ts",
+    "demo": "node apps/cli/src/index.ts demo",
+    "test": "node --test tests/**/*.test.ts"
+  }
+}

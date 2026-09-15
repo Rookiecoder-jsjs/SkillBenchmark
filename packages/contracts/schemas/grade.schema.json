@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/grade.schema.json",
+  "title": "Grade",
+  "type": "object",
+  "required": ["schema_version", "trial_id", "grader_digest", "outcome", "metrics", "assertions", "evidence_refs"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "trial_id": { "type": "string" },
+    "grader_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "outcome": { "enum": ["pass", "fail", "ungradable"] },
+    "metrics": { "type": "object", "required": ["exact_match"], "properties": { "exact_match": { "type": "number", "enum": [0, 1] } }, "additionalProperties": false },
+    "assertions": { "type": "array", "items": { "type": "object", "required": ["name", "passed", "detail"], "properties": { "name": { "type": "string" }, "passed": { "type": "boolean" }, "detail": { "type": "string" } }, "additionalProperties": false } },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

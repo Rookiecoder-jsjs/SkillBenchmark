@@ -1,0 +1,10 @@
+{
+  "schema_version": "0.1",
+  "trial_id": "run-demo-task-001-mock-none-1",
+  "run_id": "run-demo",
+  "task_id": "task-001",
+  "profile_id": "mock-node",
+  "condition_id": "none",
+  "repeat_index": 1,
+  "attempt": 1
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillbenchmark.dev/schemas/skill-snapshot.schema.json",
+  "title": "SkillSnapshot",
+  "type": "object",
+  "required": ["schema_version", "skill_id", "label", "tree_digest", "file_manifest", "requirements"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "skill_id": { "type": "string", "minLength": 1 },
+    "label": { "type": "string" },
+    "tree_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "file_manifest": { "type": "array", "items": { "type": "object", "required": ["path", "sha256", "bytes", "executable"], "properties": { "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "bytes": { "type": "integer", "minimum": 0 }, "executable": { "type": "boolean" }, "symlink": { "type": "string" } }, "additionalProperties": false } },
+    "requirements": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}
