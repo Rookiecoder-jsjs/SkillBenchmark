@@ -3,6 +3,10 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { raw += chunk; });
 process.stdin.on("end", () => {
   const input = JSON.parse(raw);
+  if (input.task.task_id === "huge") {
+    process.stdout.write("x".repeat(2 * 1024 * 1024));
+    return;
+  }
   const passed = input.artifact && input.artifact.output === input.task.expected_output;
   process.stdout.write(JSON.stringify({
     schema_version: "0.1",

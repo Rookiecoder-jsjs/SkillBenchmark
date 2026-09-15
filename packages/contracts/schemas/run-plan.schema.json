@@ -40,7 +40,8 @@
         "max_trials": { "type": "integer", "minimum": 1 },
         "max_attempts": { "type": "integer", "minimum": 1 },
         "concurrency": { "type": "integer", "minimum": 1 },
-        "timeout_ms": { "type": "integer", "minimum": 1 }
+        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "max_duration_ms": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     },

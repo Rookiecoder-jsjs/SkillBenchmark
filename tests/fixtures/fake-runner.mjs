@@ -9,6 +9,9 @@ if (prompt.includes("INFRA_RETRY") && process.env.SKILLBENCHMARK_ATTEMPT === "1"
   process.stderr.write("INFRASTRUCTURE temporary failure\n");
   process.exit(7);
 }
+if (prompt.includes("HUGE_OUTPUT")) {
+  process.stdout.write("x".repeat(5 * 1024 * 1024));
+}
 if (prompt.includes("TIMEOUT")) {
   setTimeout(() => {}, 10_000);
 } else {

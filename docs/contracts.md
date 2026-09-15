@@ -43,7 +43,7 @@
 
 ### 预算字段
 
-`max_trials` 限制展开后的计划项数，`max_attempts` 限制包含基础设施重试在内的实际启动次数。另记录并发数、单次超时、整体期限和可选用量上限。超额前停止调度，已经完成的证据保留，未完成矩阵不能发布。Optimizer 也有独立预算并汇总到 Evolution Session，不隐藏在 Trial 成本之外。
+`max_trials` 限制展开后的计划项数，`max_attempts` 限制包含基础设施重试在内的实际启动次数，`timeout_ms` 限制单次尝试，`max_duration_ms`（由新计划写入，旧计划缺失时按 Trial 数量回退）限制整个异步 Run 的墙钟时间。Runner 和 Grader 的 stdout/stderr 捕获也有固定上限，超过上限即终止该进程。超额前停止调度，已经完成的证据保留，未完成矩阵不能发布。Optimizer 也有独立预算并汇总到 Evolution Session，不隐藏在 Trial 成本之外。
 
 ## 3. 应用接口
 

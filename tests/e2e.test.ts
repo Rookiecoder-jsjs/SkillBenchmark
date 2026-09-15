@@ -3,20 +3,16 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { runSubprocess } from "../packages/core/src/subprocess.ts";
 
-function runCli(args: string[], extraEnv: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["apps/cli/src/index.ts", ...args], { cwd: process.cwd(), env: { ...process.env, ...extraEnv } });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-  });
+const E2E_TIMEOUT_MS = 60_000;
+
+async function runCli(args: string[], extraEnv: Record<string, string> = {}, timeoutMs = E2E_TIMEOUT_MS): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
+  const result = await runSubprocess({ command: process.execPath, args: ["apps/cli/src/index.ts", ...args], cwd: process.cwd(), env: extraEnv, timeout_ms: timeoutMs });
+  return { code: result.code ?? 1, stdout: result.stdout, stderr: result.timedOut ? `${result.stderr}CLI timed out after ${timeoutMs}ms` : result.stderr, timedOut: result.timedOut };
 }
 
-test("end-to-end CLI run creates plan, SQLite index, JSON, Markdown and HTML report", async () => {
+test("end-to-end CLI run creates plan, SQLite index, JSON, Markdown and HTML report", { timeout: E2E_TIMEOUT_MS }, async () => {
   const output = await mkdtemp(join(tmpdir(), "skillbenchmark-e2e-"));
   const result = await runCli(["run", "suites/smoke/suite.json", output]);
   assert.equal(result.code, 0, result.stderr);
@@ -31,7 +27,7 @@ test("end-to-end CLI run creates plan, SQLite index, JSON, Markdown and HTML rep
   assert.equal((await readFile(join(output, "metadata.sqlite"))).byteLength > 0, true);
 });
 
-test("end-to-end Codex adapter command uses structured output and isolated Worker", async () => {
+test("end-to-end Codex adapter command uses structured output and isolated Worker", { timeout: E2E_TIMEOUT_MS }, async () => {
   const root = await mkdtemp(join(tmpdir(), "skillbenchmark-adapter-e2e-"));
   const skill = join(root, "skill");
   await mkdir(skill);
@@ -45,7 +41,7 @@ test("end-to-end Codex adapter command uses structured output and isolated Worke
   assert.equal(report.summary.by_condition.candidate.passed, 3);
 });
 
-test("end-to-end evolve and release workflows preserve lineage and export receipts", async () => {
+test("end-to-end evolve and release workflows preserve lineage and export receipts", { timeout: E2E_TIMEOUT_MS }, async () => {
   const root = await mkdtemp(join(tmpdir(), "skillbenchmark-release-e2e-"));
   const skill = join(root, "skill");
   await mkdir(skill);

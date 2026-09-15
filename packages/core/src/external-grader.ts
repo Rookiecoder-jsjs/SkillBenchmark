@@ -1,11 +1,12 @@
-import { spawn } from "node:child_process";
 import type { Grade } from "../../contracts/src/types.ts";
+import { runSubprocess } from "./subprocess.ts";
 
 export interface ExternalGraderRequest {
   command: string;
   args?: string[];
   cwd?: string;
   timeout_ms?: number;
+  max_output_bytes?: number;
 }
 
 export interface ExternalGradeInput {
@@ -22,27 +23,18 @@ function validateGrade(value: unknown): Grade {
   return grade as Grade;
 }
 
-export function runExternalGrader(request: ExternalGraderRequest, input: ExternalGradeInput): Promise<Grade> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(request.command, request.args ?? [], { cwd: request.cwd, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      settled = true;
-      reject(new Error(`grader timed out after ${request.timeout_ms ?? 30_000}ms`));
-    }, request.timeout_ms ?? 30_000);
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-    child.on("error", (error) => { if (!settled) { settled = true; clearTimeout(timeout); reject(error); } });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (code !== 0) return reject(new Error(`grader exited with code ${code}: ${stderr.trim()}`));
-      try { resolve(validateGrade(JSON.parse(stdout))); } catch (error) { reject(new Error(`invalid grader output: ${error instanceof Error ? error.message : String(error)}`)); }
-    });
-    child.stdin.end(JSON.stringify(input));
+export async function runExternalGrader(request: ExternalGraderRequest, input: ExternalGradeInput): Promise<Grade> {
+  const result = await runSubprocess({
+    command: request.command,
+    args: request.args,
+    cwd: request.cwd,
+    input: JSON.stringify(input),
+    timeout_ms: request.timeout_ms,
+    max_output_bytes: request.max_output_bytes,
   });
+  if (result.timedOut) throw new Error(`grader timed out after ${request.timeout_ms ?? 30_000}ms`);
+  if (result.outputLimitExceeded) throw new Error(`grader output exceeded ${request.max_output_bytes ?? "the default"} bytes`);
+  if (result.spawnError) throw new Error(`grader failed to start: ${result.spawnError}`);
+  if (result.code !== 0) throw new Error(`grader exited with code ${result.code}: ${result.stderr.trim()}`);
+  try { return validateGrade(JSON.parse(result.stdout)); } catch (error) { throw new Error(`invalid grader output: ${error instanceof Error ? error.message : String(error)}`); }
 }

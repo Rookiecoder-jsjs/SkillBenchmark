@@ -31,7 +31,9 @@ export function createRunPlan(suite: SuiteSnapshot, options: PlanOptions = {}): 
     max_attempts: options.budget?.max_attempts ?? 1,
     concurrency: options.budget?.concurrency ?? 1,
     timeout_ms: options.budget?.timeout_ms ?? 30_000,
+    max_duration_ms: options.budget?.max_duration_ms ?? 60_000,
   };
+  for (const [name, value] of Object.entries(budget)) if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
   if (repeats < 1 || !Number.isInteger(repeats)) throw new Error("repeats must be a positive integer");
   if (conditions.length === 0) throw new Error("at least one condition is required");
   const profiles = options.profiles ?? [defaultProfile];
@@ -42,6 +44,7 @@ export function createRunPlan(suite: SuiteSnapshot, options: PlanOptions = {}): 
   const tasks = suite.tasks.filter((task) => !options.split || task.split === options.split);
   const expectedTrials = tasks.length * profiles.length * conditions.length * repeats;
   if (options.budget?.max_attempts === undefined) budget.max_attempts = Math.max(1, expectedTrials * 2);
+  if (options.budget?.max_duration_ms === undefined) budget.max_duration_ms = Math.max(60_000, budget.timeout_ms * Math.max(1, expectedTrials));
   if (expectedTrials > budget.max_trials) throw new Error(`plan requires ${expectedTrials} trials, over max_trials=${budget.max_trials}`);
   if (expectedTrials > budget.max_attempts) throw new Error(`plan requires at least ${expectedTrials} attempts, over max_attempts=${budget.max_attempts}`);
   const runId = options.runId ?? `run-${randomUUID()}`;

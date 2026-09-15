@@ -66,6 +66,7 @@ export interface Budget {
   max_attempts: number;
   concurrency: number;
   timeout_ms: number;
+  max_duration_ms?: number;
 }
 
 export interface RunPlan {

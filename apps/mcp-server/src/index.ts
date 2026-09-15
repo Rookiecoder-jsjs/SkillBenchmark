@@ -12,6 +12,61 @@ import { FileRegistry } from "../../../packages/core/src/registry.ts";
 
 export interface RpcRequest { jsonrpc?: string; id?: string | number | null; method: string; params?: Record<string, unknown>; }
 
+const DEFAULT_MAX_REQUEST_BYTES = 1 * 1024 * 1024;
+
+async function* readLines(input: NodeJS.ReadableStream, maxBytes: number): AsyncGenerator<string | null> {
+  input.setEncoding?.("utf8");
+  let fragments: string[] = [];
+  let bufferedBytes = 0;
+  let oversized = false;
+  const reset = (): void => { fragments = []; bufferedBytes = 0; oversized = false; };
+  const append = (fragment: string): void => {
+    const bytes = Buffer.byteLength(fragment);
+    if (oversized) return;
+    if (bufferedBytes + bytes > maxBytes) {
+      reset();
+      oversized = true;
+      return;
+    }
+    fragments.push(fragment);
+    bufferedBytes += bytes;
+  };
+  for await (const chunk of input as AsyncIterable<string | Buffer>) {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    let offset = 0;
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      if (newline < 0) {
+        append(text.slice(offset));
+        break;
+      }
+      append(text.slice(offset, newline));
+      if (oversized) yield null;
+      else {
+        const raw = fragments.join("");
+        const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+        if (line.trim()) yield line;
+      }
+      reset();
+      offset = newline + 1;
+    }
+  }
+  if (oversized) yield null;
+  else if (fragments.length) {
+    const line = fragments.join("");
+    if (line.trim()) yield line;
+  }
+}
+
+async function writeResponse(response: Record<string, unknown>): Promise<void> {
+  const line = `${JSON.stringify(response)}\n`;
+  if (process.stdout.write(line)) return;
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.once("drain", resolve);
+    process.stdout.once("error", reject);
+  });
+}
+
 export async function handleRequest(request: RpcRequest): Promise<Record<string, unknown>> {
   if (request.method === "initialize") return { jsonrpc: "2.0", id: request.id ?? null, result: { protocolVersion: "2024-11-05", serverInfo: { name: "skillbenchmark", version: "0.1.0" }, capabilities: { tools: {} } } };
   if (request.method === "tools/list") return { jsonrpc: "2.0", id: request.id ?? null, result: { tools: [
@@ -83,23 +138,32 @@ export async function handleRequest(request: RpcRequest): Promise<Record<string,
   }
   if (name === "skillbenchmark_run") {
     const store = new SqliteStore(join(outputDir, "metadata.sqlite"), join(outputDir, "objects"));
-    const report = attachStatistics(executePlan(suite, plan, store));
-    store.saveReport(report);
-    await writeRunArtifacts(outputDir, plan, report);
-    store.close();
+    let report: ReturnType<typeof attachStatistics> | null = null;
+    try {
+      report = attachStatistics(executePlan(suite, plan, store));
+      store.saveReport(report);
+      await writeRunArtifacts(outputDir, plan, report);
+    } finally {
+      store.close();
+    }
+    if (!report) throw new Error("run did not produce a report");
     return { jsonrpc: "2.0", id: request.id ?? null, result: { content: [{ type: "text", text: JSON.stringify({ run_id: report.run_id, gate: report.gate?.status, output_dir: outputDir }) }] } };
   }
   return { jsonrpc: "2.0", id: request.id ?? null, error: { code: -32602, message: `unknown tool: ${name}` } };
 }
 
 if (import.meta.main) {
-  let buffer = "";
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => { buffer += chunk; });
-  process.stdin.on("end", async () => {
-    for (const line of buffer.split(/\r?\n/).filter(Boolean)) {
-      try { process.stdout.write(`${JSON.stringify(await handleRequest(JSON.parse(line) as RpcRequest))}\n`); }
-      catch (error) { process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } })}\n`); }
+  const configuredMax = Number(process.env.SKILLBENCHMARK_MCP_MAX_REQUEST_BYTES);
+  const maxRequestBytes = Number.isInteger(configuredMax) && configuredMax > 0 ? configuredMax : DEFAULT_MAX_REQUEST_BYTES;
+  const runStdio = async (): Promise<void> => {
+    for await (const line of readLines(process.stdin, maxRequestBytes)) {
+      if (line === null) {
+        await writeResponse({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `request exceeds ${maxRequestBytes} bytes` } });
+        continue;
+      }
+      try { await writeResponse(await handleRequest(JSON.parse(line) as RpcRequest)); }
+      catch (error) { await writeResponse({ jsonrpc: "2.0", id: null, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } }); }
     }
-  });
+  };
+  runStdio().catch((error) => { process.stderr.write(`MCP server stopped: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
 }

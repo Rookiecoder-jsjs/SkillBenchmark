@@ -13,19 +13,35 @@ import { LocalEnvironmentBackend } from "../../../packages/core/src/environment.
 import { executePlanAsync } from "../../../packages/core/src/scheduler.ts";
 import { applyValidationGate, buildEvidenceView, createCandidateSnapshot, maintainWiki, writeEvolutionArtifacts } from "../../../packages/core/src/evolution.ts";
 import { FileRegistry } from "../../../packages/core/src/registry.ts";
+import { cleanupActiveSubprocesses } from "../../../packages/core/src/subprocess.ts";
 
 const root = resolve(import.meta.dirname, "../../../");
 const demoSuite = resolve(root, "suites/smoke/suite.json");
+let shuttingDown = false;
+function shutdown(exitCode: number): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  cleanupActiveSubprocesses("SIGKILL");
+  process.exitCode = exitCode;
+  setTimeout(() => process.exit(exitCode), 250);
+}
+process.once("SIGINT", () => shutdown(130));
+process.once("SIGTERM", () => shutdown(143));
 const usage = `SkillBenchmark v0.1\n\n用法:\n  npm run demo                         运行内置 smoke Suite\n  npm run skillbenchmark -- plan <suite.json> [output-dir]\n  npm run skillbenchmark -- run <suite.json> [output-dir]\n  npm run skillbenchmark -- run-adapter <codex|claude-code> <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- snapshot <skill-dir>\n  npm run skillbenchmark -- profile inspect <codex|claude-code>\n  npm run skillbenchmark -- evolve <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- proposal show <proposal.json>\n  npm run skillbenchmark -- compare <report.json>\n  npm run skillbenchmark -- release publish <skill-dir> <gate.json> <registry-dir>\n  npm run skillbenchmark -- release export <registry-dir> <release-id> <platform> <output-dir>\n  npm run skillbenchmark -- release rollback <registry-dir> <release-id> [expected-current-digest]\n`;
 
 async function run(suitePath: string, outputDir: string): Promise<void> {
   const suite = await loadSuite(suitePath);
   const plan = createRunPlan(suite, { repeats: 1 });
   const store = new SqliteStore(join(outputDir, "metadata.sqlite"), join(outputDir, "objects"));
-  const report = attachStatistics(executePlan(suite, plan, store));
-  store.saveReport(report);
-  await writeRunArtifacts(outputDir, plan, report);
-  store.close();
+  let report: ReturnType<typeof attachStatistics> | null = null;
+  try {
+    report = attachStatistics(executePlan(suite, plan, store));
+    store.saveReport(report);
+    await writeRunArtifacts(outputDir, plan, report);
+  } finally {
+    store.close();
+  }
+  if (!report) throw new Error("run did not produce a report");
   console.log(`run=${report.run_id}`);
   for (const [condition, summary] of Object.entries(report.summary.by_condition)) console.log(`${condition}: ${summary.passed}/${summary.total} passed (${summary.success_rate === null ? "unknown" : `${(summary.success_rate * 100).toFixed(1)}%`})`);
   console.log(`报告已写入 ${outputDir}`);
@@ -47,10 +63,15 @@ async function runAdapter(platform: string, suitePath: string, skillDir: string,
   const profile = { profile_id: platform, platform, platform_version: capability.version ?? "unknown", adapter_version: "0.1", model: "default", config_digest: sha256(`${platform}:${capability.version ?? "unknown"}`), capabilities: capability.capabilities };
   const runPlan = createRunPlan(suite, { repeats: 1, profiles: [profile] });
   const store = new SqliteStore(join(outputDir, "metadata.sqlite"), join(outputDir, "objects"));
-  const report = attachStatistics(await executePlanAsync(suite, runPlan, adapter, new LocalEnvironmentBackend(join(outputDir, "work")), store, { skill_dir: resolve(skillDir), load_method: "explicit-file-read" }));
-  store.saveReport(report);
-  await writeRunArtifacts(outputDir, runPlan, report);
-  store.close();
+  let report: ReturnType<typeof attachStatistics> | null = null;
+  try {
+    report = attachStatistics(await executePlanAsync(suite, runPlan, adapter, new LocalEnvironmentBackend(join(outputDir, "work")), store, { skill_dir: resolve(skillDir), load_method: "explicit-file-read" }));
+    store.saveReport(report);
+    await writeRunArtifacts(outputDir, runPlan, report);
+  } finally {
+    store.close();
+  }
+  if (!report) throw new Error("adapter run did not produce a report");
   console.log(`run=${report.run_id} status=${report.gate?.status ?? "unscored"}`);
 }
 

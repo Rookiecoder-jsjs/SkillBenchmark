@@ -62,6 +62,15 @@ test("external grader accepts structured Grade output", async () => {
   assert.equal(grade.outcome, "pass");
 });
 
+test("external grader bounds untrusted output", async () => {
+  await assert.rejects(runExternalGrader({ command: process.execPath, args: ["tests/fixtures/external-grader.mjs"], timeout_ms: 1000, max_output_bytes: 1024 }, {
+    schema_version: "0.1",
+    trial_id: "external-huge-trial",
+    task: { task_id: "huge", public_input: "", expected_output: "" },
+    artifact: null,
+  }), /output exceeded/);
+});
+
 test("paired bootstrap and gate reject the known candidate regression", async () => {
   const suite = await loadSuite("suites/smoke/suite.json");
   const report = attachStatistics(executePlan(suite, createRunPlan(suite, { repeats: 3, runId: "run-gate" })));

@@ -6,7 +6,7 @@
   "profiles": [],
   "conditions": ["none"],
   "repeats": 0,
-  "budget": { "max_trials": 0, "max_attempts": 0, "concurrency": 0, "timeout_ms": 0 },
+  "budget": { "max_trials": 0, "max_attempts": 0, "concurrency": 0, "timeout_ms": 0, "max_duration_ms": 0 },
   "fingerprint": "not-a-sha",
   "trials": []
 }

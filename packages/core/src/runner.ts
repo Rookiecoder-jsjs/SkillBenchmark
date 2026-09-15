@@ -1,13 +1,14 @@
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { CapabilityReport, EnvironmentHandle, EvaluationMode, ExecutionReceipt, LoadMethod, TraceEvent, TrialSpec } from "../../contracts/src/types.ts";
 import type { PublicTask, MockExecution } from "./mock-runner.ts";
 import { sha256 } from "./hash.ts";
+import { runSubprocess } from "./subprocess.ts";
 
 export interface RunnerContext {
   environment: EnvironmentHandle;
   model: string;
   timeout_ms: number;
+  max_output_bytes?: number;
   load_method: LoadMethod;
   mode: EvaluationMode;
 }
@@ -37,13 +38,6 @@ function textFrom(value: unknown): string | null {
   return null;
 }
 
-function killTree(child: ReturnType<typeof spawn>): void {
-  if (child.pid) {
-    try { process.kill(-child.pid, "SIGKILL"); } catch { /* process may already be gone */ }
-  }
-  try { child.kill("SIGKILL"); } catch { /* process may already be gone */ }
-}
-
 export class SubprocessRunnerAdapter implements RunnerAdapter {
   readonly name: string;
   readonly supportedModes: EvaluationMode[] = ["controlled"];
@@ -53,7 +47,7 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
   constructor(name: string, command: string, platform: string, argsBuilder: (prompt: string, model: string, context?: RunnerContext) => string[]) { this.name = name; this.command = command; this.platform = platform; this.argsBuilder = argsBuilder; }
 
   async probe(): Promise<CapabilityReport> {
-    const result = await this.runProcess(["--version"], process.cwd(), 10_000);
+    const result = await runSubprocess({ command: this.command, args: ["--version"], cwd: process.cwd(), timeout_ms: 10_000 });
     const version = result.stdout.trim().split("\n")[0] || null;
     return { adapter: this.name, platform: this.platform, status: result.code === 0 ? "exploratory" : "unsupported", version, capabilities: result.code === 0 ? ["non-interactive", "structured-output", ...this.supportedModes] : [], evidence: result.code === 0 ? [result.stdout.trim()] : [result.stderr.trim()] };
   }
@@ -68,12 +62,19 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
     const prompt = `${task.prompt}${skillInstruction}`;
     events.push(event(1, "trial.started", { condition_id: spec.condition_id, attempt: spec.attempt }));
     events.push(event(2, "skill.provisioned", { condition_id: spec.condition_id, method: context.load_method, exposure: context.environment.skill_path ? "available" : "absent", background_skill_count: context.environment.background_skill_paths?.length ?? 0, load_observation: context.mode === "native" ? "platform-managed" : "unknown" }));
-    const result = await this.runProcess(this.argsBuilder(prompt, context.model, context), context.environment.workdir, context.timeout_ms, {
-      SKILLBENCHMARK_INPUT: context.environment.public_input_path,
-      SKILLBENCHMARK_SKILL_PATH: context.environment.skill_path ?? "",
-      SKILLBENCHMARK_BACKGROUND_SKILLS: (context.environment.background_skill_paths ?? []).join(process.platform === "win32" ? ";" : ":"),
-      SKILLBENCHMARK_ATTEMPT: String(spec.attempt),
-      SKILLBENCHMARK_TRIAL_ID: spec.trial_id,
+    const result = await runSubprocess({
+      command: this.command,
+      args: this.argsBuilder(prompt, context.model, context),
+      cwd: context.environment.workdir,
+      timeout_ms: context.timeout_ms,
+      max_output_bytes: context.max_output_bytes,
+      env: {
+        SKILLBENCHMARK_INPUT: context.environment.public_input_path,
+        SKILLBENCHMARK_SKILL_PATH: context.environment.skill_path ?? "",
+        SKILLBENCHMARK_BACKGROUND_SKILLS: (context.environment.background_skill_paths ?? []).join(process.platform === "win32" ? ";" : ":"),
+        SKILLBENCHMARK_ATTEMPT: String(spec.attempt),
+        SKILLBENCHMARK_TRIAL_ID: spec.trial_id,
+      },
     });
     let output = "";
     let seq = 3;
@@ -87,6 +88,10 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
         output = line;
       }
     }
+    if (result.outputLimitExceeded) {
+      events.push(event(seq, "trial.finished", { status: "errored", reason: "process output limit" }));
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process output limit exceeded", failure_kind: "task" } };
+    }
     if (result.timedOut) {
       events.push(event(seq, "trial.finished", { status: "timed_out", reason: "process timeout" }));
       return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process timeout", failure_kind: "task" } };
@@ -96,28 +101,15 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
       return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.spawnError, failure_kind: "infrastructure" } };
     }
     if (result.code !== 0) {
-      events.push(event(seq, "trial.finished", { status: "errored", code: result.code, stderr: result.stderr.slice(0, 4096) }));
+      events.push(event(seq, "trial.finished", { status: "errored", code: result.code, signal: result.signal, stderr: result.stderr.slice(0, 4096) }));
       const infrastructure = result.stderr.trim().startsWith("INFRASTRUCTURE");
-      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: `runner exited with code ${result.code}`, failure_kind: infrastructure ? "infrastructure" : "task" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.signal ? `runner terminated by ${result.signal}` : `runner exited with code ${result.code}`, failure_kind: infrastructure ? "infrastructure" : "task" } };
     }
     events.push(event(seq++, "message.final", { output_bytes: Buffer.byteLength(output) }));
     events.push(event(seq, "trial.finished", { status: "completed" }));
     return { events, receipt: { trial_id: spec.trial_id, status: "completed", started_at: started, finished_at: new Date().toISOString(), artifact: { trial_id: spec.trial_id, output, output_sha256: sha256(output) }, failure_reason: null, failure_kind: null } };
   }
 
-  private runProcess(args: string[], cwd: string, timeout_ms: number, extraEnv: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string; timedOut?: boolean; spawnError?: string }> {
-    return new Promise((resolve) => {
-      const child = spawn(this.command, args, { cwd, env: { ...process.env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"], detached: true });
-      let stdout = "";
-      let stderr = "";
-      let done = false;
-      const timer = setTimeout(() => { if (done) return; done = true; killTree(child); resolve({ code: null, stdout, stderr, timedOut: true }); }, timeout_ms);
-      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-      child.on("error", (error) => { if (done) return; done = true; clearTimeout(timer); resolve({ code: null, stdout, stderr, spawnError: error.message }); });
-      child.on("close", (code) => { if (done) return; done = true; clearTimeout(timer); resolve({ code, stdout, stderr }); });
-    });
-  }
 }
 
 export class CodexAdapter extends SubprocessRunnerAdapter {
