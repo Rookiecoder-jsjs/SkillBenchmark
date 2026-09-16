@@ -72,4 +72,28 @@ test("workbench plan freezes Suite, Agent, budget and exact Skill version bindin
   assert.ok(plan.planDigest.length === 64);
   assert.equal(plans.listPlans()[0].planId, plan.planId);
   assert.throws(() => plans.createPlan({ name: "Unsafe model", experimentType: "trial", suiteVersion: suite.version, candidateVersion: skill.version, agent, repeats: 1, timeoutMs: 30_000, concurrency: 1, model: "--dangerous" }), /model/i);
+
+  await writeFile(join(skillSource, "SKILL.md"), "# Planner Skill\n\nVersion two.\n");
+  const candidate = await skills.importFromDirectory({ sourcePath: skillSource, skillId: skill.skill.skillId });
+  const versionPlan = plans.createPlan({
+    name: "Version comparison",
+    experimentType: "version-comparison",
+    suiteVersion: suite.version,
+    incumbentVersion: skill.version,
+    candidateVersion: candidate.version,
+    agent,
+    repeats: 1,
+    timeoutMs: 30_000,
+    concurrency: 1,
+  });
+  assert.deepEqual(versionPlan.corePlan.conditions, ["none", "incumbent", "candidate"]);
+  assert.equal(versionPlan.corePlan.trials.length, 3);
+  assert.equal(versionPlan.bindings.incumbent?.versionId, skill.version.versionId);
+  assert.equal(versionPlan.bindings.candidate?.versionId, candidate.version.versionId);
+
+  const otherSource = join(root, "other-skill");
+  await mkdir(otherSource);
+  await writeFile(join(otherSource, "SKILL.md"), "# Other Skill\n");
+  const other = await skills.importFromDirectory({ sourcePath: otherSource });
+  assert.throws(() => plans.createPlan({ name: "Invalid comparison", experimentType: "version-comparison", suiteVersion: suite.version, incumbentVersion: other.version, candidateVersion: candidate.version, agent, repeats: 1, timeoutMs: 30_000, concurrency: 1 }), /same Skill/i);
 });

@@ -82,15 +82,17 @@ function suiteImportInput(body: Record<string, unknown>): string {
   return body.sourcePath.trim();
 }
 
-function planInput(body: Record<string, unknown>): { name: string; experimentType: ExperimentType; suiteVersionId: string; candidateVersionId: string; agentId: AgentId; model?: string; repeats: number; timeoutMs: number; concurrency: number } {
+function planInput(body: Record<string, unknown>): { name: string; experimentType: ExperimentType; suiteVersionId: string; incumbentVersionId?: string; candidateVersionId: string; agentId: AgentId; model?: string; repeats: number; timeoutMs: number; concurrency: number } {
   if (typeof body.name !== "string") throw new Error("name is required");
-  if (body.experimentType !== "trial" && body.experimentType !== "effectiveness") throw new Error("experimentType must be trial or effectiveness");
+  if (body.experimentType !== "trial" && body.experimentType !== "effectiveness" && body.experimentType !== "version-comparison") throw new Error("experimentType must be trial, effectiveness or version-comparison");
   if (typeof body.suiteVersionId !== "string" || !/^suite-version-[0-9a-f-]{36}$/.test(body.suiteVersionId)) throw new Error("suiteVersionId is invalid");
   if (typeof body.candidateVersionId !== "string" || !/^version-[0-9a-f-]{36}$/.test(body.candidateVersionId)) throw new Error("candidateVersionId is invalid");
+  if (body.experimentType === "version-comparison" && (typeof body.incumbentVersionId !== "string" || !/^version-[0-9a-f-]{36}$/.test(body.incumbentVersionId))) throw new Error("incumbentVersionId is required for version comparison");
+  if (body.experimentType !== "version-comparison" && body.incumbentVersionId !== undefined) throw new Error("incumbentVersionId is only valid for version comparison");
   if (body.agentId !== "codex" && body.agentId !== "claude-code") throw new Error("agentId is invalid");
   if (body.model !== undefined && typeof body.model !== "string") throw new Error("model must be a string");
   if (typeof body.repeats !== "number" || typeof body.timeoutMs !== "number" || typeof body.concurrency !== "number") throw new Error("repeats, timeoutMs and concurrency must be numbers");
-  return { name: body.name, experimentType: body.experimentType, suiteVersionId: body.suiteVersionId, candidateVersionId: body.candidateVersionId, agentId: body.agentId, model: body.model as string | undefined, repeats: body.repeats, timeoutMs: body.timeoutMs, concurrency: body.concurrency };
+  return { name: body.name, experimentType: body.experimentType, suiteVersionId: body.suiteVersionId, incumbentVersionId: body.incumbentVersionId as string | undefined, candidateVersionId: body.candidateVersionId, agentId: body.agentId, model: body.model as string | undefined, repeats: body.repeats, timeoutMs: body.timeoutMs, concurrency: body.concurrency };
 }
 
 export async function startLocalWorkbench(options: WorkbenchOptions): Promise<RunningWorkbench> {
@@ -186,7 +188,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
             const input = planInput(await readJsonBody(request));
             const agent = agents.find((item) => item.id === input.agentId);
             if (!agent) throw new Error("Selected Agent was not discovered");
-            const plan = planStore!.createPlan({ name: input.name, experimentType: input.experimentType, suiteVersion: suiteStore!.getVersion(input.suiteVersionId), candidateVersion: skillStore!.getVersion(input.candidateVersionId), agent, model: input.model, repeats: input.repeats, timeoutMs: input.timeoutMs, concurrency: input.concurrency });
+            const plan = planStore!.createPlan({ name: input.name, experimentType: input.experimentType, suiteVersion: suiteStore!.getVersion(input.suiteVersionId), incumbentVersion: input.incumbentVersionId ? skillStore!.getVersion(input.incumbentVersionId) : undefined, candidateVersion: skillStore!.getVersion(input.candidateVersionId), agent, model: input.model, repeats: input.repeats, timeoutMs: input.timeoutMs, concurrency: input.concurrency });
             return sendJson(response, 201, plan);
           } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Plan creation failed" }); }
         }

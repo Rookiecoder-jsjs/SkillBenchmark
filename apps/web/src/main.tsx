@@ -23,7 +23,7 @@ interface SkillDetail { skill: Skill; versions: SkillVersion[] }
 interface VersionDiff { files: Array<{ path: string; status: "added" | "removed" | "modified" }> }
 interface SuiteVersion { versionId: string; suiteId: string; parentVersionId: string | null; ordinal: number; digest: string; label: string; sourcePath: string; createdAt: string; taskCount: number }
 interface Suite { suiteId: string; name: string; sourcePath: string; createdAt: string; updatedAt: string; versionCount: number; latestVersion: SuiteVersion | null }
-interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string; model: string }; bindings: { candidate?: { versionId: string; treeDigest: string } }; corePlan: RunPlan }
+interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness" | "version-comparison"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string; model: string }; bindings: { incumbent?: { versionId: string; treeDigest: string }; candidate?: { versionId: string; treeDigest: string } }; corePlan: RunPlan }
 interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: TraceEvent }
 interface WorkbenchRun { runId: string; planId: string; name: string; status: "queued" | "running" | "cancelling" | "completed" | "cancelled" | "failed"; createdAt: string; startedAt: string | null; finishedAt: string | null; trialCount: number; completedTrials: number; trialStatuses: Record<string, string>; events: RunProgress[]; error: string | null }
 interface WorkbenchRunDetail extends WorkbenchRun { report: RunReport | null }
@@ -54,6 +54,7 @@ function percent(value: number | null): string { return value === null ? "unknow
 
 function RunDetailModal({ run, plan, loading, error, onClose }: { run: WorkbenchRunDetail | null; plan?: WorkbenchPlan; loading: boolean; error: string; onClose: () => void }) {
   const view = run ? buildRunDetailView(run) : null;
+  const primaryContrast = view?.contrasts.find((contrast) => contrast.left === "incumbent" && contrast.right === "candidate") ?? view?.contrasts[0];
   return <div className="modal-backdrop run-detail-backdrop" role="presentation">
     <section className="run-detail-modal" role="dialog" aria-modal="true" aria-label="运行结果详情">
       <div className="modal-head"><div><span className="section-label">RUN EVIDENCE</span><h2>{run?.name ?? "正在读取运行"}</h2>{run && <code>{run.runId} · {plan?.agent.name ?? "Agent"} · {plan?.agent.model === "default" ? "本机默认模型" : plan?.agent.model ?? "未知模型"}</code>}</div><button type="button" className="modal-close" aria-label="关闭运行详情" onClick={onClose}>×</button></div>
@@ -68,7 +69,8 @@ function RunDetailModal({ run, plan, loading, error, onClose }: { run: Workbench
         </div>
         {run.error && <div className="error compact">{run.error}</div>}
         {!run.report ? <div className="detail-loading">运行尚未生成最终报告；实时事件会持续刷新。</div> : <>
-          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">CONDITION SUMMARY</span><h3>条件表现</h3></div>{view.contrasts[0] && <span className="effect-chip">{view.contrasts[0].left} → {view.contrasts[0].right} · {view.contrasts[0].effect === null ? "unknown" : `${view.contrasts[0].effect >= 0 ? "+" : ""}${(view.contrasts[0].effect * 100).toFixed(1)}pp`}</span>}</div><div className="condition-grid">{view.conditions.map((condition) => <div key={condition.condition}><span>{condition.condition}</span><strong>{percent(condition.successRate)}</strong><small>{condition.passed}/{condition.total} passed</small></div>)}</div></section>
+          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">CONDITION SUMMARY</span><h3>条件表现</h3></div>{primaryContrast && <span className="effect-chip">{primaryContrast.left} → {primaryContrast.right} · {primaryContrast.effect === null ? "unknown" : `${primaryContrast.effect >= 0 ? "+" : ""}${(primaryContrast.effect * 100).toFixed(1)}pp`}</span>}</div><div className="condition-grid">{view.conditions.map((condition) => <div key={condition.condition}><span>{condition.condition}</span><strong>{percent(condition.successRate)}</strong><small>{condition.passed}/{condition.total} passed</small></div>)}</div></section>
+          {run.report.gate && <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">VALIDATION GATE</span><h3>版本门禁</h3></div><span className={`pill ${run.report.gate.status === "accept" ? "success" : run.report.gate.status === "reject" ? "danger" : "muted"}`}>{run.report.gate.status.toUpperCase()}</span></div><ul className="gate-reasons">{run.report.gate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>}
           <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">TRIAL EVIDENCE</span><h3>逐题结果与产物</h3></div><small>{view.trials.length} Trials</small></div><div className="trial-results">{view.trials.map((trial) => <details key={trial.trialId} className="trial-result"><summary><span className={`outcome outcome-${trial.outcome}`}>{trial.outcome}</span><b>{trial.taskId}</b><code>{trial.condition} · repeat {trial.repeatIndex}</code><time>{formatDuration(trial.durationMs)}</time></summary><div className="trial-result-body">{trial.failureReason && <p className="failure-reason">{trial.failureReason}</p>}<div><span>状态</span><code>{trial.status}</code></div><div><span>Exact match</span><code>{trial.exactMatch}</code></div>{trial.outputSha256 && <div><span>输出摘要</span><code>{trial.outputSha256}</code></div>}<pre>{trial.output ?? "没有保存输出产物"}</pre></div></details>)}</div></section>
         </>}
         <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">EVENT TIMELINE</span><h3>Agent 与工具事件</h3></div><small>{view.timeline.length} events</small></div>{view.timeline.length === 0 ? <div className="detail-loading">等待平台事件…</div> : <div className="timeline">{view.timeline.map((event, index) => <details key={event.event_id ?? `${event.trial_id}-${event.seq}-${index}`} className={`timeline-event timeline-${event.category}`}><summary><time>{event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : "—"}</time><span>{event.category}</span><b>{event.label}</b><code>{event.trial_id?.split("-").slice(-4).join("-")}</code></summary><div><p>{event.detail ?? "平台未提供可展示的事件摘要"}</p><pre>{JSON.stringify(event.data, null, 2)}</pre></div></details>)}</div>}</section>
@@ -111,7 +113,11 @@ function App() {
   const [experimentOpen, setExperimentOpen] = useState(false);
   const [planError, setPlanError] = useState("");
   const [planName, setPlanName] = useState("Skill effectiveness check");
-  const [experimentType, setExperimentType] = useState<"trial" | "effectiveness">("effectiveness");
+  const [experimentType, setExperimentType] = useState<"trial" | "effectiveness" | "version-comparison">("effectiveness");
+  const [selectedPlanSkillId, setSelectedPlanSkillId] = useState("");
+  const [planSkillDetail, setPlanSkillDetail] = useState<SkillDetail | null>(null);
+  const [planSkillLoading, setPlanSkillLoading] = useState(false);
+  const [selectedIncumbentVersion, setSelectedIncumbentVersion] = useState("");
   const [selectedSkillVersion, setSelectedSkillVersion] = useState("");
   const [selectedSuiteVersion, setSelectedSuiteVersion] = useState("");
   const [selectedAgent, setSelectedAgent] = useState("codex");
@@ -253,27 +259,46 @@ function App() {
     } catch (cause) { setSuiteImportError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setImporting(false); }
   };
+  const selectPlanSkill = async (skillId: string) => {
+    setSelectedPlanSkillId(skillId);
+    setPlanSkillDetail(null);
+    setPlanSkillLoading(true);
+    setPlanError("");
+    try {
+      const next = await api<SkillDetail>(`/api/v1/skills/${skillId}`);
+      setPlanSkillDetail(next);
+      setSelectedSkillVersion(next.versions[0]?.versionId ?? "");
+      setSelectedIncumbentVersion(next.versions[1]?.versionId ?? "");
+    } catch (cause) { setPlanError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setPlanSkillLoading(false); }
+  };
   const showExperiment = () => {
-    setSelectedSkillVersion(skills[0]?.latestVersion?.versionId ?? "");
+    const firstSkillId = skills[0]?.skillId ?? "";
+    setSelectedPlanSkillId(firstSkillId);
+    setPlanSkillDetail(null);
+    setSelectedSkillVersion("");
+    setSelectedIncumbentVersion("");
     setSelectedSuiteVersion(suites[0]?.latestVersion?.versionId ?? "");
     setSelectedAgent(agents.find((agent) => agent.installation === "found")?.id ?? "codex");
     setSelectedModel("default");
     setPlanError("");
     setExperimentOpen(true);
+    if (firstSkillId) void selectPlanSkill(firstSkillId);
   };
   const submitPlan = async (event: FormEvent) => {
     event.preventDefault();
     setImporting(true);
     setPlanError("");
     try {
-      await api<WorkbenchPlan>("/api/v1/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: planName, experimentType, suiteVersionId: selectedSuiteVersion, candidateVersionId: selectedSkillVersion, agentId: selectedAgent, model: selectedModel, repeats, timeoutMs, concurrency }) });
+      await api<WorkbenchPlan>("/api/v1/plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: planName, experimentType, suiteVersionId: selectedSuiteVersion, incumbentVersionId: experimentType === "version-comparison" ? selectedIncumbentVersion : undefined, candidateVersionId: selectedSkillVersion, agentId: selectedAgent, model: selectedModel, repeats, timeoutMs, concurrency }) });
       setPlans((await api<{ plans: WorkbenchPlan[] }>("/api/v1/plans")).plans);
       setExperimentOpen(false);
     } catch (cause) { setPlanError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setImporting(false); }
   };
   const selectedSuite = suites.find((suite) => suite.latestVersion?.versionId === selectedSuiteVersion)?.latestVersion;
-  const previewTrials = (selectedSuite?.taskCount ?? 0) * (experimentType === "effectiveness" ? 2 : 1) * repeats;
+  const conditionCount = experimentType === "trial" ? 1 : experimentType === "effectiveness" ? 2 : 3;
+  const previewTrials = (selectedSuite?.taskCount ?? 0) * conditionCount * repeats;
   const startRun = async (planId: string) => {
     setError("");
     try {
@@ -388,17 +413,19 @@ function App() {
     {experimentOpen && <div className="modal-backdrop" role="presentation"><form className="import-modal plan-modal" onSubmit={(event) => void submitPlan(event)}>
       <div className="modal-head"><div><span className="section-label">NEW EVALUATION</span><h2>冻结评测计划</h2></div><button type="button" className="modal-close" aria-label="关闭" onClick={() => setExperimentOpen(false)}>×</button></div>
       <div className="form-grid"><label className="wide">计划名称<input value={planName} onChange={(event) => setPlanName(event.target.value)} /></label>
-      <label>实验类型<select value={experimentType} onChange={(event) => setExperimentType(event.target.value as "trial" | "effectiveness")}><option value="effectiveness">有效性对照</option><option value="trial">单版本试跑</option></select></label>
-      <label>Skill 版本<select value={selectedSkillVersion} onChange={(event) => setSelectedSkillVersion(event.target.value)}>{skills.map((skill) => skill.latestVersion && <option value={skill.latestVersion.versionId} key={skill.skillId}>{skill.name} · v{skill.latestVersion.ordinal}</option>)}</select></label>
+      <label>实验类型<select value={experimentType} onChange={(event) => setExperimentType(event.target.value as "trial" | "effectiveness" | "version-comparison")}><option value="effectiveness">有效性对照</option><option value="version-comparison">版本对照</option><option value="trial">单版本试跑</option></select></label>
+      <label>Skill<select value={selectedPlanSkillId} onChange={(event) => void selectPlanSkill(event.target.value)}>{skills.map((skill) => <option value={skill.skillId} key={skill.skillId}>{skill.name} · {skill.versionCount} 个版本</option>)}</select></label>
+      <label>候选版本<select value={selectedSkillVersion} disabled={planSkillLoading} onChange={(event) => { const versionId = event.target.value; setSelectedSkillVersion(versionId); if (selectedIncumbentVersion === versionId) setSelectedIncumbentVersion(planSkillDetail?.versions.find((version) => version.versionId !== versionId)?.versionId ?? ""); }}>{planSkillDetail?.versions.map((version) => <option value={version.versionId} key={version.versionId}>v{version.ordinal} · {version.treeDigest.slice(0, 10)}</option>)}</select></label>
+      {experimentType === "version-comparison" && <label>基准版本<select value={selectedIncumbentVersion} disabled={planSkillLoading} onChange={(event) => setSelectedIncumbentVersion(event.target.value)}>{planSkillDetail?.versions.filter((version) => version.versionId !== selectedSkillVersion).map((version) => <option value={version.versionId} key={version.versionId}>v{version.ordinal} · {version.treeDigest.slice(0, 10)}</option>)}</select><small>{planSkillDetail && planSkillDetail.versions.length < 2 ? "该 Skill 至少需要两个不可变版本" : "同一次运行中作为 incumbent 对照"}</small></label>}
       <label>测试集<select value={selectedSuiteVersion} onChange={(event) => setSelectedSuiteVersion(event.target.value)}>{suites.map((suite) => suite.latestVersion && <option value={suite.latestVersion.versionId} key={suite.suiteId}>{suite.name} · v{suite.latestVersion.ordinal}</option>)}</select></label>
       <label>执行 Agent<select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)}>{agents.filter((agent) => agent.installation === "found").map((agent) => <option value={agent.id} key={agent.id}>{agent.name} · {agent.version}</option>)}</select></label>
       <label>测试模型 <small>default 跟随本机 CLI 默认；也可填写该 Agent 支持的模型 ID</small><input value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} placeholder="default" /></label>
       <label>重复次数<input type="number" min="1" max="10" value={repeats} onChange={(event) => setRepeats(Number(event.target.value))} /></label>
       <label>单题超时（秒）<input type="number" min="1" max="3600" value={timeoutMs / 1000} onChange={(event) => setTimeoutMs(Number(event.target.value) * 1000)} /></label>
       <label>并发数<input type="number" min="1" max="4" value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))} /></label></div>
-      <div className="plan-preview"><span>计划预览</span><strong>{previewTrials} 个 Trial</strong><p>{selectedSuite?.taskCount ?? 0} 个任务 × {experimentType === "effectiveness" ? "2 个条件" : "1 个条件"} × {repeats} 次重复 · 模型 {selectedModel.trim() === "default" || !selectedModel.trim() ? "本机默认" : selectedModel.trim()}</p><small>模型会写入比较指纹；不同模型的运行只能做描述性并排，不能直接归因于 Skill。</small></div>
+      <div className="plan-preview"><span>计划预览</span><strong>{previewTrials} 个 Trial</strong><p>{selectedSuite?.taskCount ?? 0} 个任务 × {conditionCount} 个条件 × {repeats} 次重复 · 模型 {selectedModel.trim() === "default" || !selectedModel.trim() ? "本机默认" : selectedModel.trim()}</p><small>{experimentType === "version-comparison" ? "none、incumbent、candidate 会从各自冻结版本执行；版本增益与回归门禁保存在最终报告。" : "模型会写入比较指纹；不同模型的运行只能做描述性并排，不能直接归因于 Skill。"}</small></div>
       {planError && <div className="error compact">{planError}</div>}
-      <div className="modal-actions"><button type="button" className="secondary" onClick={() => setExperimentOpen(false)}>取消</button><button type="submit" disabled={importing || !selectedSkillVersion || !selectedSuiteVersion}>{importing ? "正在冻结…" : "确认并冻结计划"}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary" onClick={() => setExperimentOpen(false)}>取消</button><button type="submit" disabled={importing || planSkillLoading || !selectedSkillVersion || !selectedSuiteVersion || (experimentType === "version-comparison" && !selectedIncumbentVersion)}>{importing ? "正在冻结…" : "确认并冻结计划"}</button></div>
     </form></div>}
   </div>;
 }

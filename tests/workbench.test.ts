@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { discoverAgents, resolveWorkspaceRoot } from "../apps/local-server/src/discovery.ts";
@@ -81,6 +81,11 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   assert.equal(detail.status, 200);
   assert.equal((await detail.json() as { versions: unknown[] }).versions.length, 1);
 
+  await writeFile(join(source, "SKILL.md"), "# API Skill\n\nVersion two.\n");
+  const importedV2 = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: source, skillId: importedBody.skill.skillId }) });
+  assert.equal(importedV2.status, 201);
+  const importedV2Body = await importedV2.json() as { version: { versionId: string } };
+
   const suiteSource = join(root, "suite.json");
   await writeFile(suiteSource, JSON.stringify({ suite_id: "api-suite", label: "API Suite", tasks: [{ task_id: "api-task", family_id: "api", source_group: "api-task", split: "validation", prompt: "Do it", expected_output: "done", mock_outputs: {}, tags: [] }] }));
   const importedSuite = await fetch(`${workbench.origin}/api/v1/suites/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: suiteSource }) });
@@ -124,6 +129,28 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   const runList = await fetch(`${workbench.origin}/api/v1/runs`, { headers });
   const runListBody = await runList.json() as { runs: Array<Record<string, unknown>> };
   assert.equal("report" in runListBody.runs[0], false, "polling summaries must not repeatedly send full reports");
+
+  const versionPlanResponse = await fetch(`${workbench.origin}/api/v1/plans`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ name: "Version plan", experimentType: "version-comparison", suiteVersionId: suiteBody.version.versionId, incumbentVersionId: importedBody.version.versionId, candidateVersionId: importedV2Body.version.versionId, agentId: "codex", repeats: 1, timeoutMs: 30_000, concurrency: 1 }) });
+  assert.equal(versionPlanResponse.status, 201);
+  const versionPlan = await versionPlanResponse.json() as { planId: string; corePlan: { conditions: string[]; trials: unknown[] }; bindings: { incumbent: { versionId: string }; candidate: { versionId: string } } };
+  assert.deepEqual(versionPlan.corePlan.conditions, ["none", "incumbent", "candidate"]);
+  assert.equal(versionPlan.corePlan.trials.length, 3);
+  assert.equal(versionPlan.bindings.incumbent.versionId, importedBody.version.versionId);
+  assert.equal(versionPlan.bindings.candidate.versionId, importedV2Body.version.versionId);
+
+  const versionRunResponse = await fetch(`${workbench.origin}/api/v1/plans/${versionPlan.planId}/runs`, { method: "POST", headers });
+  assert.equal(versionRunResponse.status, 202);
+  const versionRun = await versionRunResponse.json() as { runId: string };
+  let versionRunStatus = "queued";
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${workbench.origin}/api/v1/runs/${versionRun.runId}`, { headers });
+    versionRunStatus = (await response.json() as { status: string }).status;
+    if (["completed", "cancelled", "failed"].includes(versionRunStatus)) break;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  }
+  assert.equal(versionRunStatus, "completed");
+  assert.equal(await readFile(join(root, ".skillbenchmark", "runs", versionRun.runId, "skills", "incumbent", "SKILL.md"), "utf8"), "# API Skill\n");
+  assert.equal(await readFile(join(root, ".skillbenchmark", "runs", versionRun.runId, "skills", "candidate", "SKILL.md"), "utf8"), "# API Skill\n\nVersion two.\n");
 
   const invalidImport = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: "" }) });
   assert.equal(invalidImport.status, 400);

@@ -110,10 +110,12 @@ export class WorkspaceRunStore {
     const frozen = this.planStore.getPlan(run.planId);
     const suite = this.suiteStore.getVersion(frozen.suite.versionId);
     const runRoot = join(this.workspaceRoot, ".skillbenchmark", "runs", runId);
-    const skillRoot = join(runRoot, "skills", "candidate");
+    const candidateSkillRoot = join(runRoot, "skills", "candidate");
+    const incumbentSkillRoot = join(runRoot, "skills", "incumbent");
     const store = new SqliteStore(join(runRoot, "metadata.sqlite"), join(runRoot, "objects"));
     try {
-      await this.skillStore.materializeVersion(frozen.bindings.candidate!.versionId, skillRoot);
+      await this.skillStore.materializeVersion(frozen.bindings.candidate!.versionId, candidateSkillRoot);
+      if (frozen.bindings.incumbent) await this.skillStore.materializeVersion(frozen.bindings.incumbent.versionId, incumbentSkillRoot);
       const plan = createRunPlan(suite.snapshot, { runId, conditions: frozen.corePlan.conditions, repeats: frozen.corePlan.repeats, profiles: frozen.corePlan.profiles, budget: frozen.corePlan.budget, mode: frozen.corePlan.mode, load_method: frozen.corePlan.load_method });
       run.status = controller.signal.aborted ? "cancelling" : "running";
       run.startedAt = new Date().toISOString();
@@ -121,7 +123,7 @@ export class WorkspaceRunStore {
       this.persist(run);
       const adapter = this.adapterFactory(frozen.agent.id, frozen.agent.executablePath);
       const report = attachStatistics(await executePlanAsync(suite.snapshot, plan, adapter, new LocalEnvironmentBackend(join(runRoot, "work")), store, {
-        skill_dirs: { candidate: skillRoot },
+        skill_dirs: { candidate: candidateSkillRoot, ...(frozen.bindings.incumbent ? { incumbent: incumbentSkillRoot } : {}) },
         signal: controller.signal,
         on_progress: (event) => {
           if (controller.signal.aborted) run.status = "cancelling";
