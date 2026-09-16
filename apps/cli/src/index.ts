@@ -153,7 +153,8 @@ async function main(): Promise<void> {
   if (command === "ui") {
     const options = uiOptions(process.argv.slice(3));
     const workspaceRoot = resolveWorkspaceRoot({ explicit: options.workspace, initCwd: process.env.INIT_CWD, cwd: process.cwd() });
-    const workbench = await startLocalWorkbench({ workspaceRoot, port: options.port, openBrowser: options.openBrowser });
+    const agentCommands = { ...(process.env.SKILLBENCHMARK_CODEX_COMMAND ? { codex: process.env.SKILLBENCHMARK_CODEX_COMMAND } : {}), ...(process.env.SKILLBENCHMARK_CLAUDE_COMMAND ? { "claude-code": process.env.SKILLBENCHMARK_CLAUDE_COMMAND } : {}) };
+    const workbench = await startLocalWorkbench({ workspaceRoot, port: options.port, openBrowser: options.openBrowser, agentCommands });
     console.log(`SkillBenchmark 工作台已启动：${workbench.browserUrl}`);
     console.log(`工作区：${workspaceRoot}`);
     return;

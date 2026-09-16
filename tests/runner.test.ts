@@ -65,6 +65,15 @@ test("shared subprocess runner bounds a hung child", async () => {
   assert.equal(result.outputLimitExceeded, false);
 });
 
+test("shared subprocess runner aborts and removes a cancelled child", async () => {
+  const controller = new AbortController();
+  const pending = runSubprocess({ command: process.execPath, args: ["-e", "setInterval(() => {}, 10000)"], timeout_ms: 10_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 30);
+  const result = await pending;
+  assert.equal(result.cancelled, true);
+  assert.equal(result.timedOut, false);
+});
+
 test("shared subprocess runner removes detached descendants", async () => {
   if (process.platform === "win32") return;
   const dir = await mkdtemp(join(tmpdir(), "skillbenchmark-process-tree-"));
@@ -119,6 +128,39 @@ test("scheduler retries infrastructure errors under the global attempt budget", 
   const report = await executePlanAsync(suite, plan, adapter, new LocalEnvironmentBackend(work));
   assert.equal(report.results[0].spec.attempt, 2);
   assert.equal(report.results[0].grade.outcome, "pass");
+});
+
+test("scheduler reports progress, uses condition-specific Skills and cancels queued trials", async () => {
+  const suite = await loadSuite("suites/smoke/suite.json");
+  const plan = createRunPlan(suite, { conditions: ["none", "candidate"], repeats: 1, runId: "run-progress", budget: { max_trials: 6, max_attempts: 6, concurrency: 1, timeout_ms: 10_000 } });
+  const controller = new AbortController();
+  const provisioned: Array<{ conditionId: string; skillDir?: string }> = [];
+  const progress: string[] = [];
+  const environment = {
+    provision: async (request: { trialId: string; conditionId: "none" | "candidate"; publicInput: string; skillDir?: string }) => {
+      provisioned.push({ conditionId: request.conditionId, skillDir: request.skillDir });
+      return { id: request.trialId, root_dir: "/tmp", workdir: "/tmp", public_input_path: "/tmp/input", skill_path: request.skillDir ?? null, snapshot: { backend: "test", image_digest: "test", tool_versions: {}, network_policy: "none" as const, isolation_receipt: { root_dir: "/tmp", hidden_mounts: [], user_config_visible: false } } };
+    },
+    collect: async () => ({ root_dir: "/tmp", workdir: "/tmp", skill_path: null }),
+    destroy: async () => undefined,
+  };
+  let calls = 0;
+  const adapter = {
+    name: "progress",
+    supportedModes: ["controlled" as const],
+    probe: async () => ({ adapter: "progress", platform: "test", status: "verified" as const, version: "1", capabilities: [], evidence: [] }),
+    execute: async (spec: typeof plan.trials[number]) => {
+      calls += 1;
+      if (calls === 2) controller.abort();
+      return { events: [], receipt: { trial_id: spec.trial_id, status: "completed" as const, started_at: new Date().toISOString(), finished_at: new Date().toISOString(), artifact: null, failure_reason: null, failure_kind: null } };
+    },
+  };
+  const report = await executePlanAsync(suite, plan, adapter, environment, undefined, { skill_dirs: { candidate: "/frozen/candidate" }, signal: controller.signal, on_progress: (event) => progress.push(event.type) });
+  assert.equal(provisioned.find((item) => item.conditionId === "none")?.skillDir, undefined);
+  assert.equal(provisioned.find((item) => item.conditionId === "candidate")?.skillDir, "/frozen/candidate");
+  assert.ok(report.results.some((result) => result.receipt.status === "cancelled"));
+  assert.ok(progress.includes("trial.running"));
+  assert.ok(progress.includes("trial.finished"));
 });
 
 test("unverified native mode is rejected instead of silently changing injection", async () => {

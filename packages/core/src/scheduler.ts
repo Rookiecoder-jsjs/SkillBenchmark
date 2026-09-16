@@ -8,8 +8,19 @@ import type { EnvironmentBackend } from "./environment.ts";
 
 export interface AsyncRunOptions {
   skill_dir?: string;
+  skill_dirs?: Partial<Record<RunPlan["conditions"][number], string>>;
   background_skill_dirs?: string[];
   load_method?: "explicit-file-read" | "prompt-inline" | "native";
+  signal?: AbortSignal;
+  on_progress?: (event: RunProgressEvent) => void;
+}
+
+export interface RunProgressEvent {
+  type: "trial.running" | "trace.event" | "trial.finished";
+  trial_id: string;
+  timestamp: string;
+  status?: TrialResult["receipt"]["status"];
+  event?: TraceEvent;
 }
 
 const CLEANUP_TIMEOUT_MS = 5_000;
@@ -39,6 +50,7 @@ export async function executePlanAsync(suite: SuiteSnapshot, plan: RunPlan, adap
   const maxDurationMs = plan.budget.max_duration_ms ?? Math.max(60_000, plan.budget.timeout_ms * Math.max(1, plan.trials.length));
   const deadline = Date.now() + maxDurationMs;
   const remaining = (): number => deadline - Date.now();
+  const progress = (event: Omit<RunProgressEvent, "timestamp">): void => options.on_progress?.({ ...event, timestamp: new Date().toISOString() });
   const take = (): typeof plan.trials[number] | undefined => queue.shift();
   const runOne = async (original: typeof plan.trials[number]): Promise<void> => {
     const task = taskById.get(original.task_id);
@@ -48,7 +60,7 @@ export async function executePlanAsync(suite: SuiteSnapshot, plan: RunPlan, adap
     let attempt = 0;
     const allEvents = [] as import("../../contracts/src/types.ts").TraceEvent[];
     let lastResult: TrialResult | null = null;
-    while (attemptsUsed < plan.budget.max_attempts && remaining() > 0) {
+    while (!options.signal?.aborted && attemptsUsed < plan.budget.max_attempts && remaining() > 0) {
       attempt += 1;
       attemptsUsed += 1;
       const spec = { ...original, attempt };
@@ -57,15 +69,16 @@ export async function executePlanAsync(suite: SuiteSnapshot, plan: RunPlan, adap
       let handle: EnvironmentHandle | undefined;
       let pendingProvision: Promise<EnvironmentHandle> | undefined;
       const operationTimeout = (): number => Math.max(1, Math.min(plan.budget.timeout_ms, remaining()));
+      progress({ type: "trial.running", trial_id: spec.trial_id });
       try {
-        pendingProvision = environment.provision({ trialId: spec.trial_id, conditionId: spec.condition_id, publicInput: task.prompt, skillDir: options.skill_dir, backgroundSkillDirs: options.background_skill_dirs });
+        pendingProvision = environment.provision({ trialId: spec.trial_id, conditionId: spec.condition_id, publicInput: task.prompt, skillDir: options.skill_dirs?.[spec.condition_id] ?? options.skill_dir, backgroundSkillDirs: options.background_skill_dirs });
         try {
           handle = await withTimeout(pendingProvision, operationTimeout(), "environment provision");
         } catch (error) {
           pendingProvision.then((lateHandle) => withTimeout(environment.destroy(lateHandle), CLEANUP_TIMEOUT_MS, "late environment cleanup").catch(() => undefined), () => undefined);
           throw error;
         }
-        execution = await adapter.execute(spec, publicTask, { environment: handle, model: plan.profiles.find((profile) => profile.profile_id === spec.profile_id)?.model ?? "unknown", timeout_ms: operationTimeout(), load_method: options.load_method ?? plan.load_method, mode: plan.mode });
+        execution = await adapter.execute(spec, publicTask, { environment: handle, model: plan.profiles.find((profile) => profile.profile_id === spec.profile_id)?.model ?? "unknown", timeout_ms: operationTimeout(), load_method: options.load_method ?? plan.load_method, mode: plan.mode, signal: options.signal, on_event: (event) => progress({ type: "trace.event", trial_id: spec.trial_id, event }) });
         await withTimeout(environment.collect(handle), operationTimeout(), "environment collect");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -82,11 +95,14 @@ export async function executePlanAsync(suite: SuiteSnapshot, plan: RunPlan, adap
       if (result.receipt.status === "errored" && result.receipt.failure_kind === "infrastructure" && attemptsUsed < plan.budget.max_attempts && remaining() > 0) continue;
       store?.saveResult(result);
       results.push(result);
+      progress({ type: "trial.finished", trial_id: spec.trial_id, status: result.receipt.status });
       return;
     }
-    const result = lastResult ?? cancelledResult(original, task, allEvents, remaining() <= 0 ? `max_duration_ms=${maxDurationMs} exhausted` : `max_attempts=${plan.budget.max_attempts} exhausted`, attempt);
+    const reason = options.signal?.aborted ? "run cancelled" : remaining() <= 0 ? `max_duration_ms=${maxDurationMs} exhausted` : `max_attempts=${plan.budget.max_attempts} exhausted`;
+    const result = lastResult ?? cancelledResult(original, task, allEvents, reason, attempt);
     store?.saveResult(result);
     results.push(result);
+    progress({ type: "trial.finished", trial_id: original.trial_id, status: result.receipt.status });
   };
   const worker = async (): Promise<void> => { while (queue.length > 0) { const next = take(); if (!next) return; await runOne(next); } };
   const workerCount = Math.max(1, Math.min(plan.budget.concurrency, plan.trials.length));

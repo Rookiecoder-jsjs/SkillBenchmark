@@ -22,6 +22,8 @@ interface VersionDiff { files: Array<{ path: string; status: "added" | "removed"
 interface SuiteVersion { versionId: string; suiteId: string; parentVersionId: string | null; ordinal: number; digest: string; label: string; sourcePath: string; createdAt: string; taskCount: number }
 interface Suite { suiteId: string; name: string; sourcePath: string; createdAt: string; updatedAt: string; versionCount: number; latestVersion: SuiteVersion | null }
 interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string }; bindings: { candidate?: { versionId: string; treeDigest: string } }; corePlan: { trials: unknown[]; conditions: string[]; repeats: number; budget: { timeout_ms: number; concurrency: number } } }
+interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: { kind: string; producer: string; data: Record<string, unknown> } }
+interface WorkbenchRun { runId: string; planId: string; name: string; status: "queued" | "running" | "cancelling" | "completed" | "cancelled" | "failed"; createdAt: string; startedAt: string | null; finishedAt: string | null; trialCount: number; completedTrials: number; trialStatuses: Record<string, string>; events: RunProgress[]; error: string | null }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -51,6 +53,7 @@ function App() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [suites, setSuites] = useState<Suite[]>([]);
   const [plans, setPlans] = useState<WorkbenchPlan[]>([]);
+  const [runs, setRuns] = useState<WorkbenchRun[]>([]);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [diff, setDiff] = useState<VersionDiff | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,23 +81,29 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [workspaceResult, agentResult, skillResult, suiteResult, planResult] = await Promise.all([
+      const [workspaceResult, agentResult, skillResult, suiteResult, planResult, runResult] = await Promise.all([
         api<Workspace>("/api/v1/workspace"),
         api<{ agents: Agent[] }>(refresh ? "/api/v1/agents/refresh" : "/api/v1/agents", refresh ? { method: "POST" } : undefined),
         api<{ skills: Skill[] }>("/api/v1/skills"),
         api<{ suites: Suite[] }>("/api/v1/suites"),
         api<{ plans: WorkbenchPlan[] }>("/api/v1/plans"),
+        api<{ runs: WorkbenchRun[] }>("/api/v1/runs"),
       ]);
       setWorkspace(workspaceResult);
       setAgents(agentResult.agents);
       setSkills(skillResult.skills);
       setSuites(suiteResult.suites);
       setPlans(planResult.plans);
+      setRuns(runResult.runs);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => { void api<{ runs: WorkbenchRun[] }>("/api/v1/runs").then((result) => setRuns(result.runs)).catch(() => undefined); }, 750);
+    return () => window.clearInterval(timer);
+  }, []);
   const available = agents.filter((agent) => agent.installation === "found").length;
 
   const showImport = (skill?: Skill) => {
@@ -158,6 +167,19 @@ function App() {
   };
   const selectedSuite = suites.find((suite) => suite.latestVersion?.versionId === selectedSuiteVersion)?.latestVersion;
   const previewTrials = (selectedSuite?.taskCount ?? 0) * (experimentType === "effectiveness" ? 2 : 1) * repeats;
+  const startRun = async (planId: string) => {
+    setError("");
+    try {
+      const run = await api<WorkbenchRun>(`/api/v1/plans/${planId}/runs`, { method: "POST" });
+      setRuns((current) => [run, ...current]);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const cancelRun = async (runId: string) => {
+    try {
+      const run = await api<WorkbenchRun>(`/api/v1/runs/${runId}/cancel`, { method: "POST" });
+      setRuns((current) => current.map((item) => item.runId === run.runId ? run : item));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
 
   return <div className="shell">
     <aside>
@@ -175,13 +197,13 @@ function App() {
       <header><div><span className="eyebrow">LOCAL WORKSPACE</span><h1>{workspace?.name ?? "正在连接工作区"}</h1><p className="path">{workspace?.root ?? "读取启动目录…"}</p></div><span className="local-badge"><b /> 本地服务已连接</span></header>
       {error && <div className="error">{error}。请从启动命令输出的完整地址重新打开页面。</div>}
       <section className="hero">
-        <div><span className="section-label">SKILL EVALUATION LAB</span><h2>让每一次 Skill 改动，<br />都有证据可循。</h2><p>导入 Skill、选择本机 Agent、运行可重复的测试，并在同一处查看过程与结果。</p><div className="actions"><button onClick={() => showImport()}>导入 Skill <span>→</span></button><button className="secondary" onClick={showExperiment} disabled={!skills.length || !suites.length || !available}>新建评测</button></div><small>{!skills.length || !suites.length ? "导入 Skill 和测试集后即可创建评测计划" : "计划会冻结版本、Agent 与预算，启动运行将在下一切片接通"}</small></div>
+        <div><span className="section-label">SKILL EVALUATION LAB</span><h2>让每一次 Skill 改动，<br />都有证据可循。</h2><p>导入 Skill、选择本机 Agent、运行可重复的测试，并在同一处查看过程与结果。</p><div className="actions"><button onClick={() => showImport()}>导入 Skill <span>→</span></button><button className="secondary" onClick={showExperiment} disabled={!skills.length || !suites.length || !available}>新建评测</button></div><small>{!skills.length || !suites.length ? "导入 Skill 和测试集后即可创建评测计划" : "冻结计划后可启动本机 Agent，并实时查看执行事件"}</small></div>
         <div className="orbital" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="core">SB</div><span className="node n1" /><span className="node n2" /><span className="node n3" /></div>
       </section>
       <section className="metrics">
         <div><span>已导入 Skills</span><strong>{skills.length}</strong><small>{skills.length ? "版本快照已保存在当前工作区" : "等待首次导入"}</small></div>
         <div><span>可用 Agent</span><strong>{loading ? "—" : available}</strong><small>{available ? "已自动完成本机探测" : "尚未发现可用安装"}</small></div>
-        <div><span>已冻结计划</span><strong>{plans.length}</strong><small>{plans.length ? "等待运行执行器接入" : "尚未创建评测"}</small></div>
+        <div><span>评测运行</span><strong>{runs.length}</strong><small>{runs.some((run) => ["queued", "running", "cancelling"].includes(run.status)) ? "Agent 正在执行" : runs.length ? "结果已保存在工作区" : "尚未启动运行"}</small></div>
       </section>
       <section className="skills-section" id="skills">
         <div className="section-head"><div><span className="section-label">IMMUTABLE ASSETS</span><h2>Skills 与版本</h2></div><button className="refresh" onClick={() => showImport()}>＋ 导入 Skill</button></div>
@@ -202,7 +224,16 @@ function App() {
       </section>
       <section className="asset-section" id="experiments">
         <div className="section-head"><div><span className="section-label">FROZEN PLANS</span><h2>评测计划</h2></div><button className="refresh" onClick={showExperiment} disabled={!skills.length || !suites.length || !available}>＋ 新建评测</button></div>
-        {plans.length === 0 ? <div className="empty-state"><strong>尚未冻结计划</strong><p>选择 Skill 版本、测试集、Agent 与预算后预览任务矩阵。</p></div> : <div className="plan-list">{plans.map((plan) => <article className="plan-card" key={plan.planId}><div><span className="pill success">READY</span><h3>{plan.name}</h3><p>{plan.suite.label} · {plan.agent.name} {plan.agent.version ?? "unknown"}</p></div><div className="plan-numbers"><strong>{plan.corePlan.trials.length}</strong><small>Trials</small></div><code>{plan.planDigest.slice(0, 12)}</code></article>)}</div>}
+        {plans.length === 0 ? <div className="empty-state"><strong>尚未冻结计划</strong><p>选择 Skill 版本、测试集、Agent 与预算后预览任务矩阵。</p></div> : <div className="plan-list">{plans.map((plan) => <article className="plan-card" key={plan.planId}><div><span className="pill success">READY</span><h3>{plan.name}</h3><p>{plan.suite.label} · {plan.agent.name} {plan.agent.version ?? "unknown"}</p></div><div className="plan-numbers"><strong>{plan.corePlan.trials.length}</strong><small>Trials</small></div><button onClick={() => void startRun(plan.planId)}>启动运行</button></article>)}</div>}
+      </section>
+      <section className="asset-section" id="runs">
+        <div className="section-head"><div><span className="section-label">LIVE EXECUTION</span><h2>运行监控</h2></div></div>
+        {runs.length === 0 ? <div className="empty-state"><strong>还没有运行</strong><p>从已冻结计划启动，过程事件、耗时和结果会自动保存。</p></div> : <div className="run-list">{runs.map((run) => {
+          const active = ["queued", "running", "cancelling"].includes(run.status);
+          const progress = run.trialCount ? Math.round(run.completedTrials / run.trialCount * 100) : 0;
+          const elapsedSeconds = run.startedAt ? Math.max(0, Math.round((new Date(run.finishedAt ?? Date.now()).getTime() - new Date(run.startedAt).getTime()) / 1000)) : 0;
+          return <article className="run-card" key={run.runId}><div className="run-head"><div><span className={`pill run-${run.status}`}>{run.status.toUpperCase()}</span><h3>{run.name}</h3><code>{run.runId.slice(0, 18)}</code></div><div className="run-count"><strong>{run.completedTrials}/{run.trialCount}</strong><small>Trials · {elapsedSeconds}s</small>{active && <button className="danger-button" onClick={() => void cancelRun(run.runId)} disabled={run.status === "cancelling"}>{run.status === "cancelling" ? "取消中…" : "取消"}</button>}</div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>{run.error && <div className="error compact">{run.error}</div>}<div className="event-stream">{run.events.filter((item) => item.type === "trace.event").slice(-6).map((item, index) => <div key={`${item.trial_id}-${index}`}><time>{new Date(item.timestamp).toLocaleTimeString()}</time><b>{item.event?.kind ?? item.type}</b><small>{item.trial_id.split("-").slice(-4).join("-")}</small></div>)}</div></article>;
+        })}</div>}
       </section>
       <section className="agents">
         <div className="section-head"><div><span className="section-label">LOCAL AGENTS</span><h2>本机 Agent</h2></div><button className="refresh" onClick={() => void load(true)} disabled={loading}>{loading ? "探测中…" : "↻ 重新探测"}</button></div>

@@ -31,6 +31,11 @@ test("workspace Skill store preserves stable identity across immutable versions"
   assert.equal(second.version.parentVersionId, first.version.versionId);
   assert.notEqual(second.version.treeDigest, first.version.treeDigest);
 
+  const materialized = join(root, "materialized-v1");
+  await store.materializeVersion(first.version.versionId, materialized);
+  assert.equal(await readFile(join(materialized, "guide.txt"), "utf8"), "first\n");
+  assert.equal((await importSkillSnapshot(materialized)).tree_digest, first.version.treeDigest);
+
   const duplicate = await store.importFromDirectory({ sourcePath: source, skillId: first.skill.skillId });
   assert.equal(duplicate.created, false);
   assert.equal(duplicate.version.versionId, second.version.versionId);

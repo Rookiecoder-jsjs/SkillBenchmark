@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, readlink, realpath, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, readlink, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { FileManifestEntry } from "../../../packages/contracts/src/types.ts";
 import { sha256 } from "../../../packages/core/src/hash.ts";
 import { ObjectStore } from "../../../packages/core/src/object-store.ts";
@@ -116,6 +116,29 @@ export class WorkspaceSkillStore {
   }
 
   getVersion(versionId: string): SkillVersion { return this.version(versionId); }
+
+  async materializeVersion(versionId: string, destination: string): Promise<SkillVersion> {
+    const version = this.version(versionId);
+    const root = resolve(destination);
+    await mkdir(root, { recursive: true });
+    for (const entry of version.fileManifest) {
+      const output = resolve(root, ...entry.path.split("/"));
+      if (output !== root && !output.startsWith(`${root}${sep}`)) throw new Error(`invalid Skill manifest path: ${entry.path}`);
+      await mkdir(dirname(output), { recursive: true });
+      if (entry.symlink !== undefined) {
+        const target = resolve(dirname(output), entry.symlink);
+        if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(`invalid Skill symlink target: ${entry.path}`);
+        await symlink(entry.symlink, output);
+      }
+      else {
+        await writeFile(output, await this.objects.get(entry.sha256), { flag: "wx", mode: entry.executable ? 0o755 : 0o644 });
+        if (entry.executable) await chmod(output, 0o755);
+      }
+    }
+    const snapshot = await importSkillSnapshot(root, version.label, { maxFiles: MAX_SKILL_FILES, maxBytes: MAX_SKILL_BYTES, excludePaths: IMPORT_EXCLUDES });
+    if (snapshot.tree_digest !== version.treeDigest) throw new Error("materialized Skill failed integrity verification");
+    return version;
+  }
 
   async importFromDirectory(input: { sourcePath: string; skillId?: string; name?: string }): Promise<{ created: boolean; skill: WorkspaceSkill; version: SkillVersion }> {
     const requested = resolve(this.workspaceRoot, input.sourcePath);

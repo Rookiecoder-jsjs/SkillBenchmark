@@ -6,6 +6,8 @@
 
 W1 前三条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 React 工作台，保留启动 Workspace，展示有界的 Codex/Claude Code 安装与版本探测，并使用启动令牌、Host/Origin 校验和安全响应头保护本地 API。Skill 目录可导入为稳定身份下的不可变版本，文件对象按摘要保存，支持重复内容去重、版本历史和文件级 diff；Suite 可校验并冻结为不可变版本，评测计划会绑定精确的 Suite、Skill、Agent、条件和预算。真实 Agent 执行及实时事件属于 W2。
 
+W2 首条竖切片已实现：运行服务从冻结计划生成独立 Run，按条件放置精确 SkillVersion，通过现有 Codex/Claude Adapter 和临时环境执行，增量保存 Trial/平台事件，支持超时、输出上限、AbortSignal 取消与子进程树清理。工作台轮询显示进度和事件，刷新后恢复历史。当前自动化与浏览器验收使用 fake Codex；真实账号、认证和固定模型下的一致性验证仍待小预算实测。
+
 ## 当前实现进度
 
 已落地本地可验证闭环：
@@ -18,7 +20,7 @@ W1 前三条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 Rea
 - P2 已实现 controlled/native/coexistence 的计划字段、加载方法、Profile 内统计和 Claude native 插件路径；Codex native 在能力不支持时明确拒绝。
 - P3 已实现 train/validation EvidenceView、Wiki 假设、父版本不变的候选快照、diff 和三态 validation gate。
 - P4 已实现本地 Registry 发布、导出收据、乐观并发检查、回滚、插件清单和 MCP JSON-RPC 桥接。
-- `tests/` 覆盖 33 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
+- `tests/` 覆盖 35 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 

@@ -11,6 +11,8 @@ export interface RunnerContext {
   max_output_bytes?: number;
   load_method: LoadMethod;
   mode: EvaluationMode;
+  signal?: AbortSignal;
+  on_event?: (event: TraceEvent) => void;
 }
 
 export interface RunnerAdapter {
@@ -56,18 +58,39 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
     const started = new Date().toISOString();
     const events: TraceEvent[] = [];
     const event = (seq: number, kind: string, data: Record<string, unknown>, producer: TraceEvent["producer"] = "adapter"): TraceEvent => ({ schema_version: "0.1", event_id: `${spec.trial_id}-evt-${seq}`, trial_id: spec.trial_id, seq, timestamp: new Date().toISOString(), producer, kind, data });
+    const emit = (value: TraceEvent): void => { events.push(value); context.on_event?.(value); };
     let skillInstruction = "";
     if (context.load_method === "explicit-file-read" && context.environment.skill_path) skillInstruction = `\nRead the Skill instructions at ${context.environment.skill_path} before answering.`;
     if (context.load_method === "prompt-inline" && context.environment.skill_path) skillInstruction = `\nSkill instructions:\n${await readFile(`${context.environment.skill_path}/SKILL.md`, "utf8").catch(() => "")}`;
     const prompt = `${task.prompt}${skillInstruction}`;
-    events.push(event(1, "trial.started", { condition_id: spec.condition_id, attempt: spec.attempt }));
-    events.push(event(2, "skill.provisioned", { condition_id: spec.condition_id, method: context.load_method, exposure: context.environment.skill_path ? "available" : "absent", background_skill_count: context.environment.background_skill_paths?.length ?? 0, load_observation: context.mode === "native" ? "platform-managed" : "unknown" }));
+    emit(event(1, "trial.started", { condition_id: spec.condition_id, attempt: spec.attempt }));
+    emit(event(2, "skill.provisioned", { condition_id: spec.condition_id, method: context.load_method, exposure: context.environment.skill_path ? "available" : "absent", background_skill_count: context.environment.background_skill_paths?.length ?? 0, load_observation: context.mode === "native" ? "platform-managed" : "unknown" }));
+    let output = "";
+    let seq = 3;
+    let stdoutBuffer = "";
+    const consumeLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        const candidate = textFrom(parsed);
+        if (candidate !== null) output = candidate;
+        emit(event(seq++, `platform.${typeof parsed.type === "string" ? parsed.type : "event"}`, { raw: JSON.stringify(parsed).slice(0, 4096) }, "platform"));
+      } catch { output = trimmed; }
+    };
     const result = await runSubprocess({
       command: this.command,
       args: this.argsBuilder(prompt, context.model, context),
       cwd: context.environment.workdir,
       timeout_ms: context.timeout_ms,
       max_output_bytes: context.max_output_bytes,
+      signal: context.signal,
+      on_stdout: (chunk) => {
+        stdoutBuffer += chunk;
+        const lines = stdoutBuffer.split(/\r?\n/);
+        stdoutBuffer = lines.pop() ?? "";
+        for (const line of lines) consumeLine(line);
+      },
       env: {
         SKILLBENCHMARK_INPUT: context.environment.public_input_path,
         SKILLBENCHMARK_SKILL_PATH: context.environment.skill_path ?? "",
@@ -76,37 +99,30 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
         SKILLBENCHMARK_TRIAL_ID: spec.trial_id,
       },
     });
-    let output = "";
-    let seq = 3;
-    for (const line of result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) {
-      try {
-        const parsed = JSON.parse(line) as Record<string, unknown>;
-        const candidate = textFrom(parsed);
-        if (candidate !== null) output = candidate;
-        events.push(event(seq++, `platform.${typeof parsed.type === "string" ? parsed.type : "event"}`, { raw: JSON.stringify(parsed).slice(0, 4096) }, "platform"));
-      } catch {
-        output = line;
-      }
+    consumeLine(stdoutBuffer);
+    if (result.cancelled) {
+      emit(event(seq, "trial.finished", { status: "cancelled", reason: "run cancelled" }));
+      return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "run cancelled", failure_kind: "cancelled" } };
     }
     if (result.outputLimitExceeded) {
-      events.push(event(seq, "trial.finished", { status: "errored", reason: "process output limit" }));
+      emit(event(seq, "trial.finished", { status: "errored", reason: "process output limit" }));
       return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process output limit exceeded", failure_kind: "task" } };
     }
     if (result.timedOut) {
-      events.push(event(seq, "trial.finished", { status: "timed_out", reason: "process timeout" }));
+      emit(event(seq, "trial.finished", { status: "timed_out", reason: "process timeout" }));
       return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process timeout", failure_kind: "task" } };
     }
     if (result.spawnError) {
-      events.push(event(seq, "trial.finished", { status: "errored", reason: result.spawnError }));
+      emit(event(seq, "trial.finished", { status: "errored", reason: result.spawnError }));
       return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.spawnError, failure_kind: "infrastructure" } };
     }
     if (result.code !== 0) {
-      events.push(event(seq, "trial.finished", { status: "errored", code: result.code, signal: result.signal, stderr: result.stderr.slice(0, 4096) }));
+      emit(event(seq, "trial.finished", { status: "errored", code: result.code, signal: result.signal, stderr: result.stderr.slice(0, 4096) }));
       const infrastructure = result.stderr.trim().startsWith("INFRASTRUCTURE");
       return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.signal ? `runner terminated by ${result.signal}` : `runner exited with code ${result.code}`, failure_kind: infrastructure ? "infrastructure" : "task" } };
     }
-    events.push(event(seq++, "message.final", { output_bytes: Buffer.byteLength(output) }));
-    events.push(event(seq, "trial.finished", { status: "completed" }));
+    emit(event(seq++, "message.final", { output_bytes: Buffer.byteLength(output) }));
+    emit(event(seq, "trial.finished", { status: "completed" }));
     return { events, receipt: { trial_id: spec.trial_id, status: "completed", started_at: started, finished_at: new Date().toISOString(), artifact: { trial_id: spec.trial_id, output, output_sha256: sha256(output) }, failure_reason: null, failure_kind: null } };
   }
 

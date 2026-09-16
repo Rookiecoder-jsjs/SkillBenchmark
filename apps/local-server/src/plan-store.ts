@@ -10,6 +10,8 @@ import type { SkillVersion } from "./skill-store.ts";
 import type { WorkspaceSuiteVersion } from "./suite-store.ts";
 
 export type ExperimentType = "trial" | "effectiveness";
+const MAX_PLAN_TRIALS = 500;
+const MAX_RUN_DURATION_MS = 60 * 60 * 1_000;
 export interface SkillBinding { skillId: string; versionId: string; treeDigest: string }
 export interface WorkbenchPlan {
   planId: string;
@@ -51,9 +53,10 @@ export class WorkspacePlanStore {
     if (!Number.isInteger(input.concurrency) || input.concurrency < 1 || input.concurrency > 4) throw new Error("concurrency must be between 1 and 4");
     const conditions: ConditionId[] = input.experimentType === "trial" ? ["candidate"] : ["none", "candidate"];
     const expectedTrials = input.suiteVersion.taskCount * conditions.length * input.repeats;
+    if (expectedTrials > MAX_PLAN_TRIALS) throw new Error(`Plan requires ${expectedTrials} Trials; interactive runs are limited to ${MAX_PLAN_TRIALS}`);
     const profile = { profile_id: input.agent.id, platform: input.agent.id, platform_version: input.agent.version ?? "unknown", adapter_version: "0.1", model: "default", config_digest: sha256(stableJson({ executable_path: input.agent.executablePath, version: input.agent.version, capabilities: input.agent.capabilities })), capabilities: input.agent.capabilities };
     const planId = `plan-${randomUUID()}`;
-    const corePlan = createRunPlan(input.suiteVersion.snapshot, { runId: planId, conditions, repeats: input.repeats, profiles: [profile], budget: { max_trials: expectedTrials, concurrency: input.concurrency, timeout_ms: input.timeoutMs } });
+    const corePlan = createRunPlan(input.suiteVersion.snapshot, { runId: planId, conditions, repeats: input.repeats, profiles: [profile], budget: { max_trials: expectedTrials, concurrency: input.concurrency, timeout_ms: input.timeoutMs, max_duration_ms: Math.min(MAX_RUN_DURATION_MS, input.timeoutMs * Math.max(1, expectedTrials)) } });
     const bindings: WorkbenchPlan["bindings"] = { candidate: { skillId: input.candidateVersion.skillId, versionId: input.candidateVersion.versionId, treeDigest: input.candidateVersion.treeDigest } };
     if (input.experimentType === "effectiveness") bindings.none = null;
     const createdAt = new Date().toISOString();
@@ -68,6 +71,12 @@ export class WorkspacePlanStore {
   listPlans(): WorkbenchPlan[] {
     const rows = this.db.prepare("SELECT plan_json FROM workspace_plans ORDER BY created_at DESC").all() as unknown as Array<{ plan_json: string }>;
     return rows.map((row) => JSON.parse(row.plan_json) as WorkbenchPlan);
+  }
+
+  getPlan(planId: string): WorkbenchPlan {
+    const row = this.db.prepare("SELECT plan_json FROM workspace_plans WHERE plan_id = ?").get(planId) as { plan_json: string } | undefined;
+    if (!row) throw new Error(`Plan not found: ${planId}`);
+    return JSON.parse(row.plan_json) as WorkbenchPlan;
   }
 
   close(): void { this.db.close(); }

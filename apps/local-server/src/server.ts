@@ -8,6 +8,7 @@ import { discoverAgents, type AgentDiscovery, type AgentId } from "./discovery.t
 import { WorkspaceSkillStore } from "./skill-store.ts";
 import { publicSuiteVersion, WorkspaceSuiteStore } from "./suite-store.ts";
 import { WorkspacePlanStore, type ExperimentType } from "./plan-store.ts";
+import { WorkspaceRunStore } from "./run-store.ts";
 
 export interface WorkbenchOptions {
   workspaceRoot: string;
@@ -102,6 +103,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
   let skillStore: WorkspaceSkillStore | null = null;
   let suiteStore: WorkspaceSuiteStore | null = null;
   let planStore: WorkspacePlanStore | null = null;
+  let runStore: WorkspaceRunStore | null = null;
   try {
     if (options.serveWebApp !== false) {
       vite = await createViteServer({
@@ -114,7 +116,9 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     skillStore = new WorkspaceSkillStore(options.workspaceRoot);
     suiteStore = new WorkspaceSuiteStore(options.workspaceRoot);
     planStore = new WorkspacePlanStore(options.workspaceRoot);
+    runStore = new WorkspaceRunStore(options.workspaceRoot, { planStore, suiteStore, skillStore });
   } catch (error) {
+    await runStore?.close();
     planStore?.close();
     suiteStore?.close();
     skillStore?.close();
@@ -185,6 +189,22 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
             return sendJson(response, 201, plan);
           } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Plan creation failed" }); }
         }
+        const planRunMatch = requestUrl.pathname.match(/^\/api\/v1\/plans\/(plan-[0-9a-f-]{36})\/runs$/);
+        if (request.method === "POST" && planRunMatch) {
+          try { return sendJson(response, 202, runStore!.start(planRunMatch[1])); }
+          catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Run start failed" }); }
+        }
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/runs") return sendJson(response, 200, { runs: runStore?.listRuns() ?? [] });
+        const runCancelMatch = requestUrl.pathname.match(/^\/api\/v1\/runs\/(run-[0-9a-f-]{36})\/cancel$/);
+        if (request.method === "POST" && runCancelMatch) {
+          try { return sendJson(response, 202, runStore!.cancel(runCancelMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Run not found" }); }
+        }
+        const runMatch = requestUrl.pathname.match(/^\/api\/v1\/runs\/(run-[0-9a-f-]{36})$/);
+        if (request.method === "GET" && runMatch) {
+          try { return sendJson(response, 200, runStore!.getRun(runMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Run not found" }); }
+        }
         if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents });
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/agents/refresh") {
           const now = Date.now();
@@ -213,6 +233,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
       server.listen(options.port ?? 4317, host, () => resolveListen());
     });
   } catch (error) {
+    await runStore?.close();
     planStore?.close();
     suiteStore?.close();
     skillStore?.close();
@@ -229,7 +250,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     token,
     close: async () => {
       try { await new Promise<void>((resolveClose, reject) => server.close((error?: Error) => error ? reject(error) : resolveClose())); }
-      finally { planStore?.close(); suiteStore?.close(); skillStore?.close(); await vite?.close(); }
+      finally { await runStore?.close(); planStore?.close(); suiteStore?.close(); skillStore?.close(); await vite?.close(); }
     },
   };
 }

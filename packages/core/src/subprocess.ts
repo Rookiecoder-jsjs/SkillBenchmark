@@ -13,6 +13,8 @@ export interface SubprocessRequest {
   timeout_ms?: number;
   max_output_bytes?: number;
   termination_grace_ms?: number;
+  signal?: AbortSignal;
+  on_stdout?: (chunk: string) => void;
 }
 
 export interface SubprocessResult {
@@ -22,6 +24,7 @@ export interface SubprocessResult {
   stderr: string;
   timedOut: boolean;
   outputLimitExceeded: boolean;
+  cancelled: boolean;
   spawnError?: string;
 }
 
@@ -131,7 +134,7 @@ export function runSubprocess(request: SubprocessRequest): Promise<SubprocessRes
         windowsHide: true,
       });
     } catch (error) {
-      resolve({ code: null, signal: null, stdout: "", stderr: "", timedOut: false, outputLimitExceeded: false, spawnError: error instanceof Error ? error.message : String(error) });
+      resolve({ code: null, signal: null, stdout: "", stderr: "", timedOut: false, outputLimitExceeded: false, cancelled: false, spawnError: error instanceof Error ? error.message : String(error) });
       return;
     }
     if (child.pid) activeChildren.set(child.pid, child);
@@ -141,24 +144,27 @@ export function runSubprocess(request: SubprocessRequest): Promise<SubprocessRes
     let terminationStarted = false;
     let timedOut = false;
     let outputLimitExceeded = false;
+    let cancelled = false;
     let timer: NodeJS.Timeout | undefined;
     let forceTimer: NodeJS.Timeout | undefined;
     let knownDescendants: number[] = [];
 
-    const finish = (result: Omit<SubprocessResult, "stdout" | "stderr" | "timedOut" | "outputLimitExceeded"> & Partial<Pick<SubprocessResult, "timedOut" | "outputLimitExceeded">>): void => {
+    const finish = (result: Omit<SubprocessResult, "stdout" | "stderr" | "timedOut" | "outputLimitExceeded" | "cancelled"> & Partial<Pick<SubprocessResult, "timedOut" | "outputLimitExceeded" | "cancelled">>): void => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (child.pid) activeChildren.delete(child.pid);
-      resolve({ ...result, stdout: text(stdout), stderr: text(stderr), timedOut, outputLimitExceeded });
+      request.signal?.removeEventListener("abort", abort);
+      resolve({ ...result, stdout: text(stdout), stderr: text(stderr), timedOut, outputLimitExceeded, cancelled });
     };
 
-    const terminate = (reason: "timeout" | "output"): void => {
+    const terminate = (reason: "timeout" | "output" | "cancel"): void => {
       if (terminationStarted || settled) return;
       terminationStarted = true;
       timedOut = reason === "timeout";
       outputLimitExceeded = reason === "output";
+      cancelled = reason === "cancel";
       knownDescendants = terminateProcessTree(child, "SIGTERM");
       child.stdin?.destroy();
       child.stdout?.destroy();
@@ -173,15 +179,22 @@ export function runSubprocess(request: SubprocessRequest): Promise<SubprocessRes
       forceTimer.unref();
     };
 
+    const abort = (): void => terminate("cancel");
+
     timer = setTimeout(() => terminate("timeout"), timeoutMs);
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+      const remaining = Math.max(0, maxOutputBytes - stdout.bytes);
+      const observed = Buffer.from(chunk).subarray(0, remaining).toString("utf8");
       if (capture(stdout, chunk, maxOutputBytes)) terminate("output");
+      try { if (observed) request.on_stdout?.(observed); } catch { /* observers cannot break process supervision */ }
     });
     child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
       if (capture(stderr, chunk, maxOutputBytes)) terminate("output");
     });
     child.on("error", (error) => finish({ code: null, signal: null, spawnError: error.message }));
     child.on("close", (code, signalValue) => finish({ code, signal: signalValue }));
+    if (request.signal?.aborted) abort();
+    else request.signal?.addEventListener("abort", abort, { once: true });
     if (request.input !== undefined) child.stdin?.end(request.input);
   });
 }
