@@ -49,15 +49,17 @@ test("workbench plan freezes Suite, Agent, budget and exact Skill version bindin
   t.after(() => { plans.close(); suites.close(); skills.close(); });
   const skill = await skills.importFromDirectory({ sourcePath: skillSource });
   const suite = await suites.importFromFile(suiteSource);
+  const agent = { id: "codex" as const, name: "Codex", installation: "found" as const, authentication: "unknown" as const, evaluationSupport: "exploratory" as const, executablePath: "/usr/bin/codex", version: "1.2.3", capabilities: ["structured-output"], detectedAt: new Date().toISOString(), evidence: [] };
   const plan = plans.createPlan({
     name: "Effectiveness check",
     experimentType: "effectiveness",
     suiteVersion: suite.version,
     candidateVersion: skill.version,
-    agent: { id: "codex", name: "Codex", installation: "found", authentication: "unknown", evaluationSupport: "exploratory", executablePath: "/usr/bin/codex", version: "1.2.3", capabilities: ["structured-output"], detectedAt: new Date().toISOString(), evidence: [] },
+    agent,
     repeats: 2,
     timeoutMs: 30_000,
     concurrency: 1,
+    model: "gpt-5.5",
   });
   assert.deepEqual(plan.corePlan.conditions, ["none", "candidate"]);
   assert.equal(plan.corePlan.trials.length, 4);
@@ -65,6 +67,9 @@ test("workbench plan freezes Suite, Agent, budget and exact Skill version bindin
   assert.equal(plan.bindings.candidate?.versionId, skill.version.versionId);
   assert.equal(plan.bindings.candidate?.treeDigest, skill.version.treeDigest);
   assert.equal(plan.suite.versionId, suite.version.versionId);
+  assert.equal(plan.agent.model, "gpt-5.5");
+  assert.equal(plan.corePlan.profiles[0].model, "gpt-5.5");
   assert.ok(plan.planDigest.length === 64);
   assert.equal(plans.listPlans()[0].planId, plan.planId);
+  assert.throws(() => plans.createPlan({ name: "Unsafe model", experimentType: "trial", suiteVersion: suite.version, candidateVersion: skill.version, agent, repeats: 1, timeoutMs: 30_000, concurrency: 1, model: "--dangerous" }), /model/i);
 });

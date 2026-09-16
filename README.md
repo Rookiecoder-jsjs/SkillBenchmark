@@ -53,7 +53,7 @@ npm test
 npm run demo
 ```
 
-`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区、本机 Agent 探测、Skill 与 Suite 导入/版本冻结、评测计划预览，以及显式启动、进度/事件查看和取消；只有点击“启动运行”才会调用所选 Agent。导入只读取源目录，内容对象、版本元数据和运行证据保存在当前 Workspace 的 `.skillbenchmark/` 中。
+`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区、本机 Agent 探测、Skill 与 Suite 导入/版本冻结、Agent 测试模型选择、评测计划预览，以及显式启动、进度/事件查看和取消；只有点击“启动运行”才会调用所选 Agent。模型可设为 `default` 跟随本机 CLI，也可填写该 Agent 支持的模型 ID，并会进入计划指纹与历史证据。导入只读取源目录，内容对象、版本元数据和运行证据保存在当前 Workspace 的 `.skillbenchmark/` 中。
 
 `npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json`、`report.md`、`report.html` 和 SQLite 索引写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
 

@@ -90,18 +90,20 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   const suites = await fetch(`${workbench.origin}/api/v1/suites`, { headers });
   const suitesBody = await suites.json() as { suites: Array<{ latestVersion: { snapshot?: unknown } | null }> };
   assert.equal(suitesBody.suites.some((suite) => suite.latestVersion && "snapshot" in suite.latestVersion), false);
-  const createdPlan = await fetch(`${workbench.origin}/api/v1/plans`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ name: "API plan", experimentType: "effectiveness", suiteVersionId: suiteBody.version.versionId, candidateVersionId: importedBody.version.versionId, agentId: "codex", repeats: 1, timeoutMs: 30_000, concurrency: 1 }) });
+  const createdPlan = await fetch(`${workbench.origin}/api/v1/plans`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ name: "API plan", experimentType: "effectiveness", suiteVersionId: suiteBody.version.versionId, candidateVersionId: importedBody.version.versionId, agentId: "codex", model: "test-model-v1", repeats: 1, timeoutMs: 30_000, concurrency: 1 }) });
   assert.equal(createdPlan.status, 201);
-  const planBody = await createdPlan.json() as { planId: string; corePlan: { trials: unknown[] }; bindings: { candidate: { versionId: string } } };
+  const planBody = await createdPlan.json() as { planId: string; agent: { model: string }; corePlan: { trials: unknown[]; profiles: Array<{ model: string }> }; bindings: { candidate: { versionId: string } } };
   assert.equal(planBody.corePlan.trials.length, 2);
   assert.equal(planBody.bindings.candidate.versionId, importedBody.version.versionId);
+  assert.equal(planBody.agent.model, "test-model-v1");
+  assert.equal(planBody.corePlan.profiles[0].model, "test-model-v1");
   const plans = await fetch(`${workbench.origin}/api/v1/plans`, { headers });
   assert.equal((await plans.json() as { plans: unknown[] }).plans.length, 1);
 
   const startedRun = await fetch(`${workbench.origin}/api/v1/plans/${planBody.planId}/runs`, { method: "POST", headers });
   assert.equal(startedRun.status, 202);
   const startedRunBody = await startedRun.json() as { runId: string };
-  type RunBody = { status: string; completedTrials: number; trialCount: number; events: unknown[] };
+  type RunBody = { status: string; completedTrials: number; trialCount: number; events: unknown[]; report: null | { plan: { profiles: Array<{ model: string }> } } };
   let runBody: RunBody | undefined;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const runResponse = await fetch(`${workbench.origin}/api/v1/runs/${startedRunBody.runId}`, { headers });
@@ -112,6 +114,7 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   assert.equal(runBody?.status, "completed");
   assert.equal(runBody?.completedTrials, runBody?.trialCount);
   assert.ok((runBody?.events.length ?? 0) > 0);
+  assert.equal(runBody?.report?.plan.profiles[0].model, "test-model-v1");
   const runList = await fetch(`${workbench.origin}/api/v1/runs`, { headers });
   const runListBody = await runList.json() as { runs: Array<Record<string, unknown>> };
   assert.equal("report" in runListBody.runs[0], false, "polling summaries must not repeatedly send full reports");

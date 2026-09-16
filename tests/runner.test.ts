@@ -28,6 +28,13 @@ test("subprocess adapter probes and captures structured final output", async () 
   await environment.destroy(handle);
 });
 
+test("Codex and Claude adapters pass a frozen non-default model as one argument", () => {
+  const codexArgs = new CodexAdapter().argsBuilder("prompt", "gpt-5.5");
+  const claudeArgs = new ClaudeCodeAdapter().argsBuilder("prompt", "claude-sonnet-test");
+  assert.deepEqual(codexArgs.slice(codexArgs.indexOf("--model"), codexArgs.indexOf("--model") + 2), ["--model", "gpt-5.5"]);
+  assert.deepEqual(claudeArgs.slice(claudeArgs.indexOf("--model"), claudeArgs.indexOf("--model") + 2), ["--model", "claude-sonnet-test"]);
+});
+
 test("async scheduler runs a real adapter through isolated environments", async () => {
   const suitePath = join(await mkdtemp(join(tmpdir(), "skillbenchmark-suite-real-")), "suite.json");
   await writeFile(suitePath, JSON.stringify({ suite_id: "real-smoke", tasks: [
