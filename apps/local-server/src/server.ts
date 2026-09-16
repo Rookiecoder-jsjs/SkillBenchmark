@@ -6,6 +6,8 @@ import { basename, resolve } from "node:path";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { discoverAgents, type AgentDiscovery, type AgentId } from "./discovery.ts";
 import { WorkspaceSkillStore } from "./skill-store.ts";
+import { publicSuiteVersion, WorkspaceSuiteStore } from "./suite-store.ts";
+import { WorkspacePlanStore, type ExperimentType } from "./plan-store.ts";
 
 export interface WorkbenchOptions {
   workspaceRoot: string;
@@ -74,6 +76,21 @@ function importInput(body: Record<string, unknown>): { sourcePath: string; skill
   return { sourcePath: body.sourcePath.trim(), skillId: body.skillId as string | undefined, name: typeof body.name === "string" ? body.name.trim() : undefined };
 }
 
+function suiteImportInput(body: Record<string, unknown>): string {
+  if (typeof body.sourcePath !== "string" || !body.sourcePath.trim() || body.sourcePath.length > 4096) throw new Error("sourcePath must be a non-empty path");
+  return body.sourcePath.trim();
+}
+
+function planInput(body: Record<string, unknown>): { name: string; experimentType: ExperimentType; suiteVersionId: string; candidateVersionId: string; agentId: AgentId; repeats: number; timeoutMs: number; concurrency: number } {
+  if (typeof body.name !== "string") throw new Error("name is required");
+  if (body.experimentType !== "trial" && body.experimentType !== "effectiveness") throw new Error("experimentType must be trial or effectiveness");
+  if (typeof body.suiteVersionId !== "string" || !/^suite-version-[0-9a-f-]{36}$/.test(body.suiteVersionId)) throw new Error("suiteVersionId is invalid");
+  if (typeof body.candidateVersionId !== "string" || !/^version-[0-9a-f-]{36}$/.test(body.candidateVersionId)) throw new Error("candidateVersionId is invalid");
+  if (body.agentId !== "codex" && body.agentId !== "claude-code") throw new Error("agentId is invalid");
+  if (typeof body.repeats !== "number" || typeof body.timeoutMs !== "number" || typeof body.concurrency !== "number") throw new Error("repeats, timeoutMs and concurrency must be numbers");
+  return { name: body.name, experimentType: body.experimentType, suiteVersionId: body.suiteVersionId, candidateVersionId: body.candidateVersionId, agentId: body.agentId, repeats: body.repeats, timeoutMs: body.timeoutMs, concurrency: body.concurrency };
+}
+
 export async function startLocalWorkbench(options: WorkbenchOptions): Promise<RunningWorkbench> {
   const host = options.host ?? "127.0.0.1";
   const token = randomBytes(32).toString("base64url");
@@ -83,6 +100,8 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
   let refresh: Promise<AgentDiscovery[]> | null = null;
   let vite: ViteDevServer | null = null;
   let skillStore: WorkspaceSkillStore | null = null;
+  let suiteStore: WorkspaceSuiteStore | null = null;
+  let planStore: WorkspacePlanStore | null = null;
   try {
     if (options.serveWebApp !== false) {
       vite = await createViteServer({
@@ -93,7 +112,11 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
       });
     }
     skillStore = new WorkspaceSkillStore(options.workspaceRoot);
+    suiteStore = new WorkspaceSuiteStore(options.workspaceRoot);
+    planStore = new WorkspacePlanStore(options.workspaceRoot);
   } catch (error) {
+    planStore?.close();
+    suiteStore?.close();
     skillStore?.close();
     await vite?.close();
     throw error;
@@ -140,6 +163,28 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
           try { return sendJson(response, 200, skillStore!.getSkill(skillMatch[1])); }
           catch { return sendJson(response, 404, { error: "Skill not found" }); }
         }
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/suites") return sendJson(response, 200, { suites: suiteStore?.listSuites() ?? [] });
+        if (request.method === "POST" && requestUrl.pathname === "/api/v1/suites/import") {
+          try {
+            const result = await suiteStore!.importFromFile(suiteImportInput(await readJsonBody(request)));
+            return sendJson(response, result.created ? 201 : 200, { ...result, version: publicSuiteVersion(result.version) });
+          } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Suite import failed" }); }
+        }
+        const suiteMatch = requestUrl.pathname.match(/^\/api\/v1\/suites\/([A-Za-z0-9._-]+)$/);
+        if (request.method === "GET" && suiteMatch) {
+          try { return sendJson(response, 200, suiteStore!.getSuite(suiteMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Suite not found" }); }
+        }
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/plans") return sendJson(response, 200, { plans: planStore?.listPlans() ?? [] });
+        if (request.method === "POST" && requestUrl.pathname === "/api/v1/plans") {
+          try {
+            const input = planInput(await readJsonBody(request));
+            const agent = agents.find((item) => item.id === input.agentId);
+            if (!agent) throw new Error("Selected Agent was not discovered");
+            const plan = planStore!.createPlan({ name: input.name, experimentType: input.experimentType, suiteVersion: suiteStore!.getVersion(input.suiteVersionId), candidateVersion: skillStore!.getVersion(input.candidateVersionId), agent, repeats: input.repeats, timeoutMs: input.timeoutMs, concurrency: input.concurrency });
+            return sendJson(response, 201, plan);
+          } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Plan creation failed" }); }
+        }
         if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents });
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/agents/refresh") {
           const now = Date.now();
@@ -168,6 +213,8 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
       server.listen(options.port ?? 4317, host, () => resolveListen());
     });
   } catch (error) {
+    planStore?.close();
+    suiteStore?.close();
     skillStore?.close();
     await vite?.close();
     throw error;
@@ -182,7 +229,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     token,
     close: async () => {
       try { await new Promise<void>((resolveClose, reject) => server.close((error?: Error) => error ? reject(error) : resolveClose())); }
-      finally { skillStore?.close(); await vite?.close(); }
+      finally { planStore?.close(); suiteStore?.close(); skillStore?.close(); await vite?.close(); }
     },
   };
 }

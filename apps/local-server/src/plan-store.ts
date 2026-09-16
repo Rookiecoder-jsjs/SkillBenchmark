@@ -1,0 +1,74 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { join, resolve } from "node:path";
+import type { ConditionId, RunPlan } from "../../../packages/contracts/src/types.ts";
+import { sha256, stableJson } from "../../../packages/core/src/hash.ts";
+import { createRunPlan } from "../../../packages/core/src/plan.ts";
+import type { AgentDiscovery } from "./discovery.ts";
+import type { SkillVersion } from "./skill-store.ts";
+import type { WorkspaceSuiteVersion } from "./suite-store.ts";
+
+export type ExperimentType = "trial" | "effectiveness";
+export interface SkillBinding { skillId: string; versionId: string; treeDigest: string }
+export interface WorkbenchPlan {
+  planId: string;
+  name: string;
+  experimentType: ExperimentType;
+  status: "ready";
+  createdAt: string;
+  planDigest: string;
+  suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number };
+  agent: { id: string; name: string; executablePath: string; version: string | null; evaluationSupport: string };
+  bindings: Partial<Record<ConditionId, SkillBinding | null>>;
+  corePlan: RunPlan;
+}
+
+export class WorkspacePlanStore {
+  readonly db: DatabaseSync;
+  constructor(workspaceRoot: string) {
+    const stateRoot = join(resolve(workspaceRoot), ".skillbenchmark");
+    mkdirSync(stateRoot, { recursive: true });
+    this.db = new DatabaseSync(join(stateRoot, "metadata.sqlite"));
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS workspace_plans (
+        plan_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        plan_digest TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        plan_json TEXT NOT NULL
+      );
+    `);
+  }
+
+  createPlan(input: { name: string; experimentType: ExperimentType; suiteVersion: WorkspaceSuiteVersion; candidateVersion: SkillVersion; agent: AgentDiscovery; repeats: number; timeoutMs: number; concurrency: number }): WorkbenchPlan {
+    if (!input.name.trim() || input.name.length > 160) throw new Error("Plan name must contain 1 to 160 characters");
+    if (input.agent.installation !== "found" || !input.agent.executablePath) throw new Error("Selected Agent is not installed");
+    if (!Number.isInteger(input.repeats) || input.repeats < 1 || input.repeats > 10) throw new Error("repeats must be between 1 and 10");
+    if (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1_000 || input.timeoutMs > 3_600_000) throw new Error("timeoutMs must be between 1000 and 3600000");
+    if (!Number.isInteger(input.concurrency) || input.concurrency < 1 || input.concurrency > 4) throw new Error("concurrency must be between 1 and 4");
+    const conditions: ConditionId[] = input.experimentType === "trial" ? ["candidate"] : ["none", "candidate"];
+    const expectedTrials = input.suiteVersion.taskCount * conditions.length * input.repeats;
+    const profile = { profile_id: input.agent.id, platform: input.agent.id, platform_version: input.agent.version ?? "unknown", adapter_version: "0.1", model: "default", config_digest: sha256(stableJson({ executable_path: input.agent.executablePath, version: input.agent.version, capabilities: input.agent.capabilities })), capabilities: input.agent.capabilities };
+    const planId = `plan-${randomUUID()}`;
+    const corePlan = createRunPlan(input.suiteVersion.snapshot, { runId: planId, conditions, repeats: input.repeats, profiles: [profile], budget: { max_trials: expectedTrials, concurrency: input.concurrency, timeout_ms: input.timeoutMs } });
+    const bindings: WorkbenchPlan["bindings"] = { candidate: { skillId: input.candidateVersion.skillId, versionId: input.candidateVersion.versionId, treeDigest: input.candidateVersion.treeDigest } };
+    if (input.experimentType === "effectiveness") bindings.none = null;
+    const createdAt = new Date().toISOString();
+    const suite = { suiteId: input.suiteVersion.suiteId, versionId: input.suiteVersion.versionId, digest: input.suiteVersion.digest, label: input.suiteVersion.label, taskCount: input.suiteVersion.taskCount };
+    const agent = { id: input.agent.id, name: input.agent.name, executablePath: input.agent.executablePath, version: input.agent.version, evaluationSupport: input.agent.evaluationSupport };
+    const frozen = { name: input.name.trim(), experimentType: input.experimentType, status: "ready" as const, createdAt, suite, agent, bindings, corePlan };
+    const plan: WorkbenchPlan = { planId, ...frozen, planDigest: sha256(stableJson(frozen)) };
+    this.db.prepare("INSERT INTO workspace_plans(plan_id, name, plan_digest, status, created_at, plan_json) VALUES (?, ?, ?, ?, ?, ?)").run(plan.planId, plan.name, plan.planDigest, plan.status, plan.createdAt, JSON.stringify(plan));
+    return plan;
+  }
+
+  listPlans(): WorkbenchPlan[] {
+    const rows = this.db.prepare("SELECT plan_json FROM workspace_plans ORDER BY created_at DESC").all() as unknown as Array<{ plan_json: string }>;
+    return rows.map((row) => JSON.parse(row.plan_json) as WorkbenchPlan);
+  }
+
+  close(): void { this.db.close(); }
+}

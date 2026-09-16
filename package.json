@@ -15,7 +15,7 @@
     "skillbenchmark": "node apps/cli/src/index.ts",
     "demo": "node apps/cli/src/index.ts demo",
     "test": "npm run test:regression && npm run test:e2e",
-    "test:regression": "node --test tests/core.test.ts tests/runner.test.ts tests/evolution.test.ts tests/registry.test.ts tests/mcp.test.ts tests/workbench.test.ts tests/skill-store.test.ts",
+    "test:regression": "node --test tests/core.test.ts tests/runner.test.ts tests/evolution.test.ts tests/registry.test.ts tests/mcp.test.ts tests/workbench.test.ts tests/skill-store.test.ts tests/workbench-plan.test.ts",
     "test:e2e": "node --test tests/e2e.test.ts"
   },
   "dependencies": {

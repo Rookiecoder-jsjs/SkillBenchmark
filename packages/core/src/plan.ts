@@ -52,6 +52,7 @@ export function createRunPlan(suite: SuiteSnapshot, options: PlanOptions = {}): 
     suite_id: suite.suite_id,
     suite_digest: suite.digest,
     profiles,
+    conditions,
     budget,
     repeats,
     split: options.split ?? null,

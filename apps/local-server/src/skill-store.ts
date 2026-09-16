@@ -115,6 +115,8 @@ export class WorkspaceSkillStore {
     return { skill, versions: rows.map(versionFromRow) };
   }
 
+  getVersion(versionId: string): SkillVersion { return this.version(versionId); }
+
   async importFromDirectory(input: { sourcePath: string; skillId?: string; name?: string }): Promise<{ created: boolean; skill: WorkspaceSkill; version: SkillVersion }> {
     const requested = resolve(this.workspaceRoot, input.sourcePath);
     if (!existsSync(requested) || !(await stat(requested)).isDirectory()) throw new Error("Skill source must be an existing directory");

@@ -81,6 +81,23 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   assert.equal(detail.status, 200);
   assert.equal((await detail.json() as { versions: unknown[] }).versions.length, 1);
 
+  const suiteSource = join(root, "suite.json");
+  await writeFile(suiteSource, JSON.stringify({ suite_id: "api-suite", label: "API Suite", tasks: [{ task_id: "api-task", family_id: "api", source_group: "api-task", split: "validation", prompt: "Do it", expected_output: "done", mock_outputs: {}, tags: [] }] }));
+  const importedSuite = await fetch(`${workbench.origin}/api/v1/suites/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: suiteSource }) });
+  assert.equal(importedSuite.status, 201);
+  const suiteBody = await importedSuite.json() as { version: { versionId: string; snapshot?: unknown } };
+  assert.equal("snapshot" in suiteBody.version, false, "grading material must not be exposed by the Suite import API");
+  const suites = await fetch(`${workbench.origin}/api/v1/suites`, { headers });
+  const suitesBody = await suites.json() as { suites: Array<{ latestVersion: { snapshot?: unknown } | null }> };
+  assert.equal(suitesBody.suites.some((suite) => suite.latestVersion && "snapshot" in suite.latestVersion), false);
+  const createdPlan = await fetch(`${workbench.origin}/api/v1/plans`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ name: "API plan", experimentType: "effectiveness", suiteVersionId: suiteBody.version.versionId, candidateVersionId: importedBody.version.versionId, agentId: "codex", repeats: 1, timeoutMs: 30_000, concurrency: 1 }) });
+  assert.equal(createdPlan.status, 201);
+  const planBody = await createdPlan.json() as { corePlan: { trials: unknown[] }; bindings: { candidate: { versionId: string } } };
+  assert.equal(planBody.corePlan.trials.length, 2);
+  assert.equal(planBody.bindings.candidate.versionId, importedBody.version.versionId);
+  const plans = await fetch(`${workbench.origin}/api/v1/plans`, { headers });
+  assert.equal((await plans.json() as { plans: unknown[] }).plans.length, 1);
+
   const invalidImport = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: "" }) });
   assert.equal(invalidImport.status, 400);
   assert.ok(importedBody.version.versionId);
