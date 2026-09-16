@@ -18,7 +18,7 @@
 
 ## 设计文档
 
-下一阶段产品形态为“本地启动即打开网页的 Skill 评测工作台”，详见[本地可视化工作台架构](docs/local-workbench-architecture.md)。W1 的第一条竖切片已经可运行：本地网页、启动工作区和 Codex/Claude Code 探测已接通；Skill 导入、可视化运行和历史对比仍按该架构继续实现。
+下一阶段产品形态为“本地启动即打开网页的 Skill 评测工作台”，详见[本地可视化工作台架构](docs/local-workbench-architecture.md)。W1 已接通本地网页、启动工作区、Codex/Claude Code 探测，以及 Skill 目录导入、不可变版本和文件级 diff；测试集资产、可视化运行和历史对比仍按该架构继续实现。
 
 | 文档 | 解决的问题 |
 | --- | --- |
@@ -53,7 +53,7 @@ npm test
 npm run demo
 ```
 
-`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区和本机 Agent 探测；尚未接通的入口会在界面中标注。
+`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区、本机 Agent 探测和 Skill 导入/版本查看；导入只读取源目录，内容对象与版本元数据保存在当前 Workspace 的 `.skillbenchmark/` 中。
 
 `npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json`、`report.md`、`report.html` 和 SQLite 索引写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
 

@@ -4,7 +4,7 @@
 
 下一阶段按[本地可视化工作台架构](local-workbench-architecture.md)中的 W1–W4 推进：工作台与资产 → Codex 实时运行 → 对比与版本管理 → Claude Code 一致性验证。以下 P0–P4 是已有首版模块的工程记录，不能视为新工作台或真实多版本演化已经完成；必要改造见新架构第 12 节。
 
-W1 第一条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 React 工作台，保留启动 Workspace，展示有界的 Codex/Claude Code 安装与版本探测，并使用启动令牌、Host/Origin 校验和安全响应头保护本地 API。Skill 导入、不可变版本和测试集资产仍属于 W1 后续工作。
+W1 前两条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 React 工作台，保留启动 Workspace，展示有界的 Codex/Claude Code 安装与版本探测，并使用启动令牌、Host/Origin 校验和安全响应头保护本地 API。Skill 目录可导入为稳定身份下的不可变版本，文件对象按摘要保存，支持重复内容去重、版本历史和文件级 diff；测试集资产仍属于 W1 后续工作。
 
 ## 当前实现进度
 
@@ -18,7 +18,7 @@ W1 第一条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 Rea
 - P2 已实现 controlled/native/coexistence 的计划字段、加载方法、Profile 内统计和 Claude native 插件路径；Codex native 在能力不支持时明确拒绝。
 - P3 已实现 train/validation EvidenceView、Wiki 假设、父版本不变的候选快照、diff 和三态 validation gate。
 - P4 已实现本地 Registry 发布、导出收据、乐观并发检查、回滚、插件清单和 MCP JSON-RPC 桥接。
-- `tests/` 覆盖 27 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
+- `tests/` 覆盖 31 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 

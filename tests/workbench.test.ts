@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { discoverAgents, resolveWorkspaceRoot } from "../apps/local-server/src/discovery.ts";
@@ -67,4 +67,21 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   const agents = await fetch(`${workbench.origin}/api/v1/agents`, { headers });
   assert.equal(agents.status, 200);
   assert.equal(((await agents.json() as { agents: Array<{ id: string; installation: string }> }).agents.find((agent) => agent.id === "codex"))?.installation, "found");
+
+  const source = join(root, "sample-skill");
+  await mkdir(source);
+  await writeFile(join(source, "SKILL.md"), "# API Skill\n");
+  const imported = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: source }) });
+  assert.equal(imported.status, 201);
+  const importedBody = await imported.json() as { skill: { skillId: string }; version: { versionId: string } };
+  const skills = await fetch(`${workbench.origin}/api/v1/skills`, { headers });
+  assert.equal(skills.status, 200);
+  assert.equal((await skills.json() as { skills: unknown[] }).skills.length, 1);
+  const detail = await fetch(`${workbench.origin}/api/v1/skills/${importedBody.skill.skillId}`, { headers });
+  assert.equal(detail.status, 200);
+  assert.equal((await detail.json() as { versions: unknown[] }).versions.length, 1);
+
+  const invalidImport = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: "" }) });
+  assert.equal(invalidImport.status, 400);
+  assert.ok(importedBody.version.versionId);
 });

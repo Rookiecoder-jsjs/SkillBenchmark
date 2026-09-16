@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { basename, resolve } from "node:path";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { discoverAgents, type AgentDiscovery, type AgentId } from "./discovery.ts";
+import { WorkspaceSkillStore } from "./skill-store.ts";
 
 export interface WorkbenchOptions {
   workspaceRoot: string;
@@ -48,6 +49,31 @@ function openBrowser(url: string): void {
   child.unref();
 }
 
+async function readJsonBody(request: IncomingMessage, maxBytes = 16 * 1024): Promise<Record<string, unknown>> {
+  if (!(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) throw new Error("content-type must be application/json");
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let oversized = false;
+  for await (const chunk of request) {
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += value.byteLength;
+    if (bytes <= maxBytes) chunks.push(value);
+    else oversized = true;
+  }
+  if (oversized) throw new Error(`request body exceeds ${maxBytes} bytes`);
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new Error("request body must be valid JSON"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("request body must be a JSON object");
+  return parsed as Record<string, unknown>;
+}
+
+function importInput(body: Record<string, unknown>): { sourcePath: string; skillId?: string; name?: string } {
+  if (typeof body.sourcePath !== "string" || !body.sourcePath.trim() || body.sourcePath.length > 4096) throw new Error("sourcePath must be a non-empty path");
+  if (body.skillId !== undefined && (typeof body.skillId !== "string" || !/^skill-[0-9a-f-]{36}$/.test(body.skillId))) throw new Error("skillId is invalid");
+  if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.length > 120)) throw new Error("name must contain 1 to 120 characters");
+  return { sourcePath: body.sourcePath.trim(), skillId: body.skillId as string | undefined, name: typeof body.name === "string" ? body.name.trim() : undefined };
+}
+
 export async function startLocalWorkbench(options: WorkbenchOptions): Promise<RunningWorkbench> {
   const host = options.host ?? "127.0.0.1";
   const token = randomBytes(32).toString("base64url");
@@ -56,13 +82,21 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
   let lastRefreshAt = 0;
   let refresh: Promise<AgentDiscovery[]> | null = null;
   let vite: ViteDevServer | null = null;
-  if (options.serveWebApp !== false) {
-    vite = await createViteServer({
-      root: resolve(import.meta.dirname, "../../web"),
-      appType: "spa",
-      server: { middlewareMode: true, hmr: false },
-      clearScreen: false,
-    });
+  let skillStore: WorkspaceSkillStore | null = null;
+  try {
+    if (options.serveWebApp !== false) {
+      vite = await createViteServer({
+        root: resolve(import.meta.dirname, "../../web"),
+        appType: "spa",
+        server: { middlewareMode: true, hmr: false },
+        clearScreen: false,
+      });
+    }
+    skillStore = new WorkspaceSkillStore(options.workspaceRoot);
+  } catch (error) {
+    skillStore?.close();
+    await vite?.close();
+    throw error;
   }
 
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
@@ -83,6 +117,28 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
         if (!validToken(request.headers["x-skillbenchmark-token"], token) && !validToken(cookieToken(request), token)) return sendJson(response, 401, { error: "invalid token" });
         if (request.method === "GET" && requestUrl.pathname === "/api/v1/workspace") {
           return sendJson(response, 200, { name: basename(options.workspaceRoot), root: options.workspaceRoot });
+        }
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/skills") return sendJson(response, 200, { skills: skillStore?.listSkills() ?? [] });
+        if (request.method === "POST" && requestUrl.pathname === "/api/v1/skills/import") {
+          try {
+            const result = await skillStore!.importFromDirectory(importInput(await readJsonBody(request)));
+            return sendJson(response, result.created ? 201 : 200, result);
+          } catch (error) {
+            return sendJson(response, 400, { error: error instanceof Error ? error.message : "Skill import failed" });
+          }
+        }
+        const diffMatch = requestUrl.pathname.match(/^\/api\/v1\/skills\/(skill-[0-9a-f-]{36})\/diff$/);
+        if (request.method === "GET" && diffMatch) {
+          const from = requestUrl.searchParams.get("from");
+          const to = requestUrl.searchParams.get("to");
+          if (!from || !to) return sendJson(response, 400, { error: "from and to version ids are required" });
+          try { return sendJson(response, 200, await skillStore!.diffVersions(diffMatch[1], from, to)); }
+          catch { return sendJson(response, 404, { error: "Skill or version not found" }); }
+        }
+        const skillMatch = requestUrl.pathname.match(/^\/api\/v1\/skills\/(skill-[0-9a-f-]{36})$/);
+        if (request.method === "GET" && skillMatch) {
+          try { return sendJson(response, 200, skillStore!.getSkill(skillMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Skill not found" }); }
         }
         if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents });
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/agents/refresh") {
@@ -112,6 +168,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
       server.listen(options.port ?? 4317, host, () => resolveListen());
     });
   } catch (error) {
+    skillStore?.close();
     await vite?.close();
     throw error;
   }
@@ -124,8 +181,8 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     browserUrl,
     token,
     close: async () => {
-      await new Promise<void>((resolveClose, reject) => server.close((error?: Error) => error ? reject(error) : resolveClose()));
-      await vite?.close();
+      try { await new Promise<void>((resolveClose, reject) => server.close((error?: Error) => error ? reject(error) : resolveClose())); }
+      finally { skillStore?.close(); await vite?.close(); }
     },
   };
 }
