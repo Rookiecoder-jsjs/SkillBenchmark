@@ -1,5 +1,7 @@
 import { StrictMode, useCallback, useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
+import type { RunReport, TraceEvent } from "../../../packages/contracts/src/types.ts";
+import { buildRunDetailView, formatDuration } from "./run-view.ts";
 import "./styles.css";
 
 interface Workspace { name: string; root: string }
@@ -22,8 +24,9 @@ interface VersionDiff { files: Array<{ path: string; status: "added" | "removed"
 interface SuiteVersion { versionId: string; suiteId: string; parentVersionId: string | null; ordinal: number; digest: string; label: string; sourcePath: string; createdAt: string; taskCount: number }
 interface Suite { suiteId: string; name: string; sourcePath: string; createdAt: string; updatedAt: string; versionCount: number; latestVersion: SuiteVersion | null }
 interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string; model: string }; bindings: { candidate?: { versionId: string; treeDigest: string } }; corePlan: { trials: unknown[]; conditions: string[]; repeats: number; budget: { timeout_ms: number; concurrency: number } } }
-interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: { kind: string; producer: string; data: Record<string, unknown> } }
+interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: TraceEvent }
 interface WorkbenchRun { runId: string; planId: string; name: string; status: "queued" | "running" | "cancelling" | "completed" | "cancelled" | "failed"; createdAt: string; startedAt: string | null; finishedAt: string | null; trialCount: number; completedTrials: number; trialStatuses: Record<string, string>; events: RunProgress[]; error: string | null }
+interface WorkbenchRunDetail extends WorkbenchRun { report: RunReport | null }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -47,6 +50,34 @@ function AgentCard({ agent }: { agent: Agent }) {
   </article>;
 }
 
+function percent(value: number | null): string { return value === null ? "unknown" : `${(value * 100).toFixed(1)}%`; }
+
+function RunDetailModal({ run, plan, loading, error, onClose }: { run: WorkbenchRunDetail | null; plan?: WorkbenchPlan; loading: boolean; error: string; onClose: () => void }) {
+  const view = run ? buildRunDetailView(run) : null;
+  return <div className="modal-backdrop run-detail-backdrop" role="presentation">
+    <section className="run-detail-modal" role="dialog" aria-modal="true" aria-label="运行结果详情">
+      <div className="modal-head"><div><span className="section-label">RUN EVIDENCE</span><h2>{run?.name ?? "正在读取运行"}</h2>{run && <code>{run.runId} · {plan?.agent.name ?? "Agent"} · {plan?.agent.model === "default" ? "本机默认模型" : plan?.agent.model ?? "未知模型"}</code>}</div><button type="button" className="modal-close" aria-label="关闭运行详情" onClick={onClose}>×</button></div>
+      {loading && !run && <div className="detail-loading">正在读取保存的运行证据…</div>}
+      {error && <div className="error compact">{error}</div>}
+      {run && view && <>
+        <div className="detail-summary">
+          <div><span>状态</span><strong>{run.status}</strong></div>
+          <div><span>Run 墙钟</span><strong>{formatDuration(view.wallTimeMs)}</strong></div>
+          <div><span>Trial 累计</span><strong>{formatDuration(view.aggregateTrialTimeMs)}</strong><small>并行时不等于墙钟</small></div>
+          <div><span>通过</span><strong>{view.passedTrials}/{view.totalTrials || run.trialCount}</strong></div>
+        </div>
+        {run.error && <div className="error compact">{run.error}</div>}
+        {!run.report ? <div className="detail-loading">运行尚未生成最终报告；实时事件会持续刷新。</div> : <>
+          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">CONDITION SUMMARY</span><h3>条件表现</h3></div>{view.contrasts[0] && <span className="effect-chip">{view.contrasts[0].left} → {view.contrasts[0].right} · {view.contrasts[0].effect === null ? "unknown" : `${view.contrasts[0].effect >= 0 ? "+" : ""}${(view.contrasts[0].effect * 100).toFixed(1)}pp`}</span>}</div><div className="condition-grid">{view.conditions.map((condition) => <div key={condition.condition}><span>{condition.condition}</span><strong>{percent(condition.successRate)}</strong><small>{condition.passed}/{condition.total} passed</small></div>)}</div></section>
+          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">TRIAL EVIDENCE</span><h3>逐题结果与产物</h3></div><small>{view.trials.length} Trials</small></div><div className="trial-results">{view.trials.map((trial) => <details key={trial.trialId} className="trial-result"><summary><span className={`outcome outcome-${trial.outcome}`}>{trial.outcome}</span><b>{trial.taskId}</b><code>{trial.condition} · repeat {trial.repeatIndex}</code><time>{formatDuration(trial.durationMs)}</time></summary><div className="trial-result-body">{trial.failureReason && <p className="failure-reason">{trial.failureReason}</p>}<div><span>状态</span><code>{trial.status}</code></div><div><span>Exact match</span><code>{trial.exactMatch}</code></div>{trial.outputSha256 && <div><span>输出摘要</span><code>{trial.outputSha256}</code></div>}<pre>{trial.output ?? "没有保存输出产物"}</pre></div></details>)}</div></section>
+        </>}
+        <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">EVENT TIMELINE</span><h3>Agent 与工具事件</h3></div><small>{view.timeline.length} events</small></div>{view.timeline.length === 0 ? <div className="detail-loading">等待平台事件…</div> : <div className="timeline">{view.timeline.map((event, index) => <details key={event.event_id ?? `${event.trial_id}-${event.seq}-${index}`} className={`timeline-event timeline-${event.category}`}><summary><time>{event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : "—"}</time><span>{event.category}</span><b>{event.label}</b><code>{event.trial_id?.split("-").slice(-4).join("-")}</code></summary><div><p>{event.detail ?? "平台未提供可展示的事件摘要"}</p><pre>{JSON.stringify(event.data, null, 2)}</pre></div></details>)}</div>}</section>
+        <p className="measurement-note">耗时来自本机接收时间与执行收据；Trial 累计耗时在并发运行时不可当作 Run 总耗时。平台未报告的 token、费用或工具细节保持 unknown。</p>
+      </>}
+    </section>
+  </div>;
+}
+
 function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -54,6 +85,10 @@ function App() {
   const [suites, setSuites] = useState<Suite[]>([]);
   const [plans, setPlans] = useState<WorkbenchPlan[]>([]);
   const [runs, setRuns] = useState<WorkbenchRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [runDetail, setRunDetail] = useState<WorkbenchRunDetail | null>(null);
+  const [runDetailLoading, setRunDetailLoading] = useState(false);
+  const [runDetailError, setRunDetailError] = useState("");
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [diff, setDiff] = useState<VersionDiff | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,6 +113,28 @@ function App() {
   const [repeats, setRepeats] = useState(1);
   const [timeoutMs, setTimeoutMs] = useState(30_000);
   const [concurrency, setConcurrency] = useState(1);
+  const showRun = useCallback(async (runId: string, updateUrl = true) => {
+    setSelectedRunId(runId);
+    setRunDetail(null);
+    setRunDetailLoading(true);
+    setRunDetailError("");
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("run", runId);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    try { setRunDetail(await api<WorkbenchRunDetail>(`/api/v1/runs/${runId}`)); }
+    catch (cause) { setRunDetailError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setRunDetailLoading(false); }
+  }, []);
+  const closeRun = () => {
+    setSelectedRunId(null);
+    setRunDetail(null);
+    setRunDetailError("");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("run");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  };
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
     setError("");
@@ -102,9 +159,18 @@ function App() {
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
+    const requested = new URL(window.location.href).searchParams.get("run");
+    if (requested && /^run-[0-9a-f-]{36}$/.test(requested) && !selectedRunId) void showRun(requested, false);
+  }, [selectedRunId, showRun]);
+  useEffect(() => {
     const timer = window.setInterval(() => { void api<{ runs: WorkbenchRun[] }>("/api/v1/runs").then((result) => setRuns(result.runs)).catch(() => undefined); }, 750);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!selectedRunId || !runDetail || !["queued", "running", "cancelling"].includes(runDetail.status)) return;
+    const timer = window.setInterval(() => { void api<WorkbenchRunDetail>(`/api/v1/runs/${selectedRunId}`).then(setRunDetail).catch(() => undefined); }, 750);
+    return () => window.clearInterval(timer);
+  }, [selectedRunId, runDetail?.status]);
   const available = agents.filter((agent) => agent.installation === "found").length;
 
   const showImport = (skill?: Skill) => {
@@ -174,6 +240,7 @@ function App() {
     try {
       const run = await api<WorkbenchRun>(`/api/v1/plans/${planId}/runs`, { method: "POST" });
       setRuns((current) => [run, ...current]);
+      void showRun(run.runId);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const cancelRun = async (runId: string) => {
@@ -235,7 +302,7 @@ function App() {
           const progress = run.trialCount ? Math.round(run.completedTrials / run.trialCount * 100) : 0;
           const elapsedSeconds = run.startedAt ? Math.max(0, Math.round((new Date(run.finishedAt ?? Date.now()).getTime() - new Date(run.startedAt).getTime()) / 1000)) : 0;
           const runPlan = plans.find((plan) => plan.planId === run.planId);
-          return <article className="run-card" key={run.runId}><div className="run-head"><div><span className={`pill run-${run.status}`}>{run.status.toUpperCase()}</span><h3>{run.name}</h3><code>{run.runId.slice(0, 18)} · {runPlan?.agent.model === "default" ? "本机默认模型" : runPlan?.agent.model ?? "未知模型"}</code></div><div className="run-count"><strong>{run.completedTrials}/{run.trialCount}</strong><small>Trials · {elapsedSeconds}s</small>{active && <button className="danger-button" onClick={() => void cancelRun(run.runId)} disabled={run.status === "cancelling"}>{run.status === "cancelling" ? "取消中…" : "取消"}</button>}</div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>{run.error && <div className="error compact">{run.error}</div>}<div className="event-stream">{run.events.filter((item) => item.type === "trace.event").slice(-6).map((item, index) => <div key={`${item.trial_id}-${index}`}><time>{new Date(item.timestamp).toLocaleTimeString()}</time><b>{item.event?.kind ?? item.type}</b><small>{item.trial_id.split("-").slice(-4).join("-")}</small></div>)}</div></article>;
+          return <article className="run-card" key={run.runId}><div className="run-head"><div><span className={`pill run-${run.status}`}>{run.status.toUpperCase()}</span><h3>{run.name}</h3><code>{run.runId.slice(0, 18)} · {runPlan?.agent.model === "default" ? "本机默认模型" : runPlan?.agent.model ?? "未知模型"}</code></div><div className="run-count"><strong>{run.completedTrials}/{run.trialCount}</strong><small>Trials · {elapsedSeconds}s</small><div className="run-actions"><button className="secondary" onClick={() => void showRun(run.runId)}>查看详情</button>{active && <button className="danger-button" onClick={() => void cancelRun(run.runId)} disabled={run.status === "cancelling"}>{run.status === "cancelling" ? "取消中…" : "取消"}</button>}</div></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>{run.error && <div className="error compact">{run.error}</div>}<div className="event-stream">{run.events.filter((item) => item.type === "trace.event").slice(-6).map((item, index) => <div key={`${item.trial_id}-${index}`}><time>{new Date(item.timestamp).toLocaleTimeString()}</time><b>{item.event?.kind ?? item.type}</b><small>{item.trial_id.split("-").slice(-4).join("-")}</small></div>)}</div></article>;
         })}</div>}
       </section>
       <section className="agents">
@@ -244,6 +311,7 @@ function App() {
         <p className="notice">探测只检查本机可执行文件和版本，不会读取或保存登录凭证。连接资格会在真实运行前单独验证。</p>
       </section>
     </main>
+    {selectedRunId && <RunDetailModal run={runDetail} plan={plans.find((plan) => plan.planId === runDetail?.planId)} loading={runDetailLoading} error={runDetailError} onClose={closeRun} />}
     {importOpen && <div className="modal-backdrop" role="presentation"><form className="import-modal" onSubmit={(event) => void submitImport(event)}>
       <div className="modal-head"><div><span className="section-label">{targetSkillId ? "NEW VERSION" : "IMPORT SKILL"}</span><h2>{targetSkillId ? "导入新版本" : "导入本机 Skill"}</h2></div><button type="button" className="modal-close" aria-label="关闭" onClick={() => setImportOpen(false)}>×</button></div>
       <label>Skill 目录路径<input autoFocus value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="/Users/you/skills/my-skill" /></label>

@@ -103,7 +103,7 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   const startedRun = await fetch(`${workbench.origin}/api/v1/plans/${planBody.planId}/runs`, { method: "POST", headers });
   assert.equal(startedRun.status, 202);
   const startedRunBody = await startedRun.json() as { runId: string };
-  type RunBody = { status: string; completedTrials: number; trialCount: number; events: unknown[]; report: null | { plan: { profiles: Array<{ model: string }> } } };
+  type RunBody = { status: string; completedTrials: number; trialCount: number; events: unknown[]; report: null | { plan: { profiles: Array<{ model: string }> }; summary: { by_condition: Record<string, { total: number }> }; results: Array<{ receipt: { started_at: string; finished_at: string; artifact: { output: string; output_sha256: string } | null }; events: unknown[] }> } };
   let runBody: RunBody | undefined;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const runResponse = await fetch(`${workbench.origin}/api/v1/runs/${startedRunBody.runId}`, { headers });
@@ -115,6 +115,12 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   assert.equal(runBody?.completedTrials, runBody?.trialCount);
   assert.ok((runBody?.events.length ?? 0) > 0);
   assert.equal(runBody?.report?.plan.profiles[0].model, "test-model-v1");
+  assert.equal(runBody?.report?.summary.by_condition.none.total, 1);
+  assert.equal(runBody?.report?.summary.by_condition.candidate.total, 1);
+  assert.equal(runBody?.report?.results.length, 2);
+  assert.ok(runBody?.report?.results.every((result) => Date.parse(result.receipt.finished_at) >= Date.parse(result.receipt.started_at)));
+  assert.ok(runBody?.report?.results.every((result) => result.events.length > 0));
+  assert.ok(runBody?.report?.results.every((result) => result.receipt.artifact?.output_sha256));
   const runList = await fetch(`${workbench.origin}/api/v1/runs`, { headers });
   const runListBody = await runList.json() as { runs: Array<Record<string, unknown>> };
   assert.equal("report" in runListBody.runs[0], false, "polling summaries must not repeatedly send full reports");

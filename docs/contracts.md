@@ -2,7 +2,7 @@
 
 状态：v0.1 协议与首版实现同步。核心类型和 Skill、Suite、Trial、Grade、Comparison、RunPlan、环境、Evidence、Proposal、Gate、Release、RunnerProfile JSON Schema 已实现；后续兼容字段需提升协议版本并保留历史证据。
 
-下一阶段的 Workspace、SkillVersion、Condition 版本绑定、Attempt、实时事件游标与 HTTP API 见[本地可视化工作台架构](local-workbench-architecture.md)。Workspace、Agent、Skill、Suite、Plan 与 Run 已形成首版本地 HTTP API；Plan 保存精确的 Condition → SkillVersion 绑定及请求模型，模型同时进入 RunnerProfile、配置摘要和比较指纹。Run 保存状态、Trial 进度、受限的实时事件窗口及最终报告，并支持取消。独立 Attempt 资源、平台实际模型收据和游标式事件补流仍待版本化实现。本页下述目标字段/接口并非全部等同于现有 TypeScript 实现，实际差距与迁移要求列于新架构第 12 节。实现时应版本化迁移，不能给旧记录补造缺失证据。
+下一阶段的 Workspace、SkillVersion、Condition 版本绑定、Attempt、实时事件游标与 HTTP API 见[本地可视化工作台架构](local-workbench-architecture.md)。Workspace、Agent、Skill、Suite、Plan 与 Run 已形成首版本地 HTTP API；Plan 保存精确的 Condition → SkillVersion 绑定及请求模型，模型同时进入 RunnerProfile、配置摘要和比较指纹。Run 保存状态、Trial 进度、受限的实时事件窗口及最终报告，并支持取消；详情读取最终报告中的条件汇总、逐题 ExecutionReceipt、Grade、TraceEvent 与输出产物，缺失字段不由 UI 补造。独立 Attempt 资源、平台实际模型收据和游标式事件补流仍待版本化实现。本页下述目标字段/接口并非全部等同于现有 TypeScript 实现，实际差距与迁移要求列于新架构第 12 节。实现时应版本化迁移，不能给旧记录补造缺失证据。
 
 ## 1. 通用规则
 
