@@ -18,7 +18,7 @@
 
 ## 设计文档
 
-下一阶段产品形态为“本地启动即打开网页的 Skill 评测工作台”，详见[本地可视化工作台架构](docs/local-workbench-architecture.md)。W1 已接通本地网页、工作区、Agent 探测和不可变 Skill/Suite/计划；W2 已能从冻结计划启动 Codex/Claude Code Adapter，展示增量事件与 Trial 进度，保存、取消并重新打开运行。结果详情展示条件汇总、逐题评分/产物、墙钟与累计 Trial 耗时，以及可展开的平台事件时间线。真实账号下的 Codex 一致性验收、统一工具事件和历史对比仍按该架构继续实现。
+下一阶段产品形态为“本地启动即打开网页的 Skill 评测工作台”，详见[本地可视化工作台架构](docs/local-workbench-architecture.md)。W1 已接通本地网页、工作区、Agent 探测和不可变 Skill/Suite/计划；W2 已能从冻结计划启动 Codex/Claude Code Adapter，展示增量事件与 Trial 进度，保存、取消并重新打开运行。结果详情展示条件汇总、逐题评分/产物、墙钟与累计 Trial 耗时，以及可展开的平台事件时间线。W3 的历史运行对比已可按任务、Profile、条件和重复次数配对，展示改进/回归、条件指标与墙钟变化；配置不一致时会降级为描述性对比，不将变化归因于 Skill。真实账号下的 Codex 一致性验收、统一工具事件和完整发布/回滚体验仍按该架构继续实现。
 
 | 文档 | 解决的问题 |
 | --- | --- |
@@ -53,7 +53,7 @@ npm test
 npm run demo
 ```
 
-`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区、本机 Agent 探测、Skill 与 Suite 导入/版本冻结、Agent 测试模型选择、评测计划预览，以及显式启动、进度/事件查看、取消和运行结果详情；只有点击“启动运行”才会调用所选 Agent。详情地址保存 Run ID，刷新后可从本地报告恢复条件指标、逐题输出和事件。模型可设为 `default` 跟随本机 CLI，也可填写该 Agent 支持的模型 ID，并会进入计划指纹与历史证据。导入只读取源目录，内容对象、版本元数据和运行证据保存在当前 Workspace 的 `.skillbenchmark/` 中。
+`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区、本机 Agent 探测、Skill 与 Suite 导入/版本冻结、Agent 测试模型选择、评测计划预览，以及显式启动、进度/事件查看、取消、运行结果详情和两次已完成运行的历史对比；只有点击“启动运行”才会调用所选 Agent。详情地址保存 Run ID，对比地址保存两个 Run ID，刷新后均可从本地报告恢复。历史对比会先检查 Suite、Agent/模型、Runner 配置、条件、重复次数、预算与加载方式；只有这些对齐后才可用于 Skill 归因或重复性判断。模型可设为 `default` 跟随本机 CLI，也可填写该 Agent 支持的模型 ID，并会进入计划指纹与历史证据。导入只读取源目录，内容对象、版本元数据和运行证据保存在当前 Workspace 的 `.skillbenchmark/` 中。
 
 `npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json`、`report.md`、`report.html` 和 SQLite 索引写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
 

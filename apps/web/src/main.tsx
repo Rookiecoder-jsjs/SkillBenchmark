@@ -1,7 +1,7 @@
 import { StrictMode, useCallback, useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import type { RunReport, TraceEvent } from "../../../packages/contracts/src/types.ts";
-import { buildRunDetailView, formatDuration } from "./run-view.ts";
+import type { RunPlan, RunReport, TraceEvent } from "../../../packages/contracts/src/types.ts";
+import { buildRunComparison, buildRunDetailView, formatDuration } from "./run-view.ts";
 import "./styles.css";
 
 interface Workspace { name: string; root: string }
@@ -23,7 +23,7 @@ interface SkillDetail { skill: Skill; versions: SkillVersion[] }
 interface VersionDiff { files: Array<{ path: string; status: "added" | "removed" | "modified" }> }
 interface SuiteVersion { versionId: string; suiteId: string; parentVersionId: string | null; ordinal: number; digest: string; label: string; sourcePath: string; createdAt: string; taskCount: number }
 interface Suite { suiteId: string; name: string; sourcePath: string; createdAt: string; updatedAt: string; versionCount: number; latestVersion: SuiteVersion | null }
-interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string; model: string }; bindings: { candidate?: { versionId: string; treeDigest: string } }; corePlan: { trials: unknown[]; conditions: string[]; repeats: number; budget: { timeout_ms: number; concurrency: number } } }
+interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" | "effectiveness"; status: "ready"; createdAt: string; planDigest: string; suite: { suiteId: string; versionId: string; digest: string; label: string; taskCount: number }; agent: { id: string; name: string; version: string | null; evaluationSupport: string; model: string }; bindings: { candidate?: { versionId: string; treeDigest: string } }; corePlan: RunPlan }
 interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: TraceEvent }
 interface WorkbenchRun { runId: string; planId: string; name: string; status: "queued" | "running" | "cancelling" | "completed" | "cancelled" | "failed"; createdAt: string; startedAt: string | null; finishedAt: string | null; trialCount: number; completedTrials: number; trialStatuses: Record<string, string>; events: RunProgress[]; error: string | null }
 interface WorkbenchRunDetail extends WorkbenchRun { report: RunReport | null }
@@ -89,6 +89,12 @@ function App() {
   const [runDetail, setRunDetail] = useState<WorkbenchRunDetail | null>(null);
   const [runDetailLoading, setRunDetailLoading] = useState(false);
   const [runDetailError, setRunDetailError] = useState("");
+  const [compareLeftId, setCompareLeftId] = useState(() => new URL(window.location.href).searchParams.get("compareLeft") ?? "");
+  const [compareRightId, setCompareRightId] = useState(() => new URL(window.location.href).searchParams.get("compareRight") ?? "");
+  const [compareLeftRun, setCompareLeftRun] = useState<WorkbenchRunDetail | null>(null);
+  const [compareRightRun, setCompareRightRun] = useState<WorkbenchRunDetail | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState("");
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [diff, setDiff] = useState<VersionDiff | null>(null);
   const [loading, setLoading] = useState(true);
@@ -135,6 +141,29 @@ function App() {
     url.searchParams.delete("run");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   };
+  const compareRuns = useCallback(async (leftId: string, rightId: string, updateUrl = true) => {
+    if (leftId === rightId) { setComparisonError("请选择两次不同的运行"); return; }
+    if (!/^run-[0-9a-f-]{36}$/.test(leftId) || !/^run-[0-9a-f-]{36}$/.test(rightId)) { setComparisonError("运行 ID 无效"); return; }
+    setComparisonLoading(true);
+    setComparisonError("");
+    try {
+      const [left, right] = await Promise.all([api<WorkbenchRunDetail>(`/api/v1/runs/${leftId}`), api<WorkbenchRunDetail>(`/api/v1/runs/${rightId}`)]);
+      if (!left.report || !right.report) throw new Error("两次运行都必须完成并生成最终报告");
+      setCompareLeftRun(left);
+      setCompareRightRun(right);
+      if (updateUrl) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("run");
+        url.searchParams.set("compareLeft", leftId);
+        url.searchParams.set("compareRight", rightId);
+        url.hash = "compare";
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+        setSelectedRunId(null);
+        setRunDetail(null);
+      }
+    } catch (cause) { setComparisonError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setComparisonLoading(false); }
+  }, []);
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
     setError("");
@@ -163,6 +192,9 @@ function App() {
     if (requested && /^run-[0-9a-f-]{36}$/.test(requested) && !selectedRunId) void showRun(requested, false);
   }, [selectedRunId, showRun]);
   useEffect(() => {
+    if (compareLeftId !== compareRightId && /^run-[0-9a-f-]{36}$/.test(compareLeftId) && /^run-[0-9a-f-]{36}$/.test(compareRightId) && !compareLeftRun && !compareRightRun && !comparisonLoading && !comparisonError) void compareRuns(compareLeftId, compareRightId);
+  }, [compareLeftId, compareRightId, compareLeftRun, compareRightRun, comparisonLoading, comparisonError, compareRuns]);
+  useEffect(() => {
     const timer = window.setInterval(() => { void api<{ runs: WorkbenchRun[] }>("/api/v1/runs").then((result) => setRuns(result.runs)).catch(() => undefined); }, 750);
     return () => window.clearInterval(timer);
   }, []);
@@ -172,6 +204,13 @@ function App() {
     return () => window.clearInterval(timer);
   }, [selectedRunId, runDetail?.status]);
   const available = agents.filter((agent) => agent.installation === "found").length;
+  const completedRuns = runs.filter((run) => run.status === "completed");
+  useEffect(() => {
+    if (!compareLeftId && !compareRightId && completedRuns.length >= 2) {
+      setCompareLeftId(completedRuns[1].runId);
+      setCompareRightId(completedRuns[0].runId);
+    }
+  }, [completedRuns, compareLeftId, compareRightId]);
 
   const showImport = (skill?: Skill) => {
     setTargetSkillId(skill?.skillId);
@@ -249,6 +288,10 @@ function App() {
       setRuns((current) => current.map((item) => item.runId === run.runId ? run : item));
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
+  const compareLeftPlan = plans.find((plan) => plan.planId === compareLeftRun?.planId);
+  const compareRightPlan = plans.find((plan) => plan.planId === compareRightRun?.planId);
+  const comparison = compareLeftRun && compareRightRun && compareLeftPlan && compareRightPlan ? buildRunComparison(compareLeftRun, compareRightRun, compareLeftPlan, compareRightPlan) : null;
+  const comparisonLabel = comparison?.comparability === "skill-effect" ? "严格可比 · Skill 版本效果" : comparison?.comparability === "repeatability" ? "严格可比 · 相同 Skill 重复性" : "仅描述性比较";
 
   return <div className="shell">
     <aside>
@@ -304,6 +347,21 @@ function App() {
           const runPlan = plans.find((plan) => plan.planId === run.planId);
           return <article className="run-card" key={run.runId}><div className="run-head"><div><span className={`pill run-${run.status}`}>{run.status.toUpperCase()}</span><h3>{run.name}</h3><code>{run.runId.slice(0, 18)} · {runPlan?.agent.model === "default" ? "本机默认模型" : runPlan?.agent.model ?? "未知模型"}</code></div><div className="run-count"><strong>{run.completedTrials}/{run.trialCount}</strong><small>Trials · {elapsedSeconds}s</small><div className="run-actions"><button className="secondary" onClick={() => void showRun(run.runId)}>查看详情</button>{active && <button className="danger-button" onClick={() => void cancelRun(run.runId)} disabled={run.status === "cancelling"}>{run.status === "cancelling" ? "取消中…" : "取消"}</button>}</div></div></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>{run.error && <div className="error compact">{run.error}</div>}<div className="event-stream">{run.events.filter((item) => item.type === "trace.event").slice(-6).map((item, index) => <div key={`${item.trial_id}-${index}`}><time>{new Date(item.timestamp).toLocaleTimeString()}</time><b>{item.event?.kind ?? item.type}</b><small>{item.trial_id.split("-").slice(-4).join("-")}</small></div>)}</div></article>;
         })}</div>}
+      </section>
+      <section className="asset-section" id="compare">
+        <div className="section-head"><div><span className="section-label">HISTORICAL COMPARISON</span><h2>历史运行对比</h2></div></div>
+        {completedRuns.length < 2 ? <div className="empty-state"><strong>至少需要两次已完成运行</strong><p>完成第二次评测后，可以比较 Skill 版本、逐题变化与耗时。</p></div> : <>
+          <div className="compare-controls"><label>基准运行<select value={compareLeftId} onChange={(event) => { setCompareLeftId(event.target.value); setCompareLeftRun(null); setCompareRightRun(null); setComparisonError(""); }}>{completedRuns.map((run) => <option value={run.runId} key={run.runId}>{run.name} · {new Date(run.createdAt).toLocaleString()}</option>)}</select></label><span>→</span><label>目标运行<select value={compareRightId} onChange={(event) => { setCompareRightId(event.target.value); setCompareLeftRun(null); setCompareRightRun(null); setComparisonError(""); }}>{completedRuns.map((run) => <option value={run.runId} key={run.runId}>{run.name} · {new Date(run.createdAt).toLocaleString()}</option>)}</select></label><button onClick={() => void compareRuns(compareLeftId, compareRightId)} disabled={comparisonLoading}>{comparisonLoading ? "比较中…" : "比较运行"}</button></div>
+          {comparisonError && <div className="error compact">{comparisonError}</div>}
+          {comparison && compareLeftRun && compareRightRun && compareLeftPlan && compareRightPlan && <div className="comparison-view">
+            <div className={`comparability-banner comparison-${comparison.comparability}`}><div><span>{comparisonLabel}</span><strong>{comparison.comparability === "skill-effect" ? "配置一致，可以将配对差异解释为 Skill 快照变化的证据。" : comparison.comparability === "repeatability" ? "配置与 Skill 相同，本视图反映重复运行的稳定性。" : "配置存在差异，只能并排观察，不能将变化归因于 Skill。"}</strong></div>{comparison.reasons.length > 0 && <ul>{comparison.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}</div>
+            <div className="compare-runs"><article><span>BASELINE</span><h3>{compareLeftRun.name}</h3><p>{compareLeftPlan.agent.name} · {compareLeftPlan.agent.model === "default" ? "本机默认模型" : compareLeftPlan.agent.model}</p><code>{comparison.leftSkill?.versionId ?? "无 candidate"} · {comparison.leftSkill?.treeDigest.slice(0, 10) ?? "unknown"}</code><button className="secondary" onClick={() => void showRun(compareLeftRun.runId)}>查看证据</button></article><article><span>TARGET</span><h3>{compareRightRun.name}</h3><p>{compareRightPlan.agent.name} · {compareRightPlan.agent.model === "default" ? "本机默认模型" : compareRightPlan.agent.model}</p><code>{comparison.rightSkill?.versionId ?? "无 candidate"} · {comparison.rightSkill?.treeDigest.slice(0, 10) ?? "unknown"}</code><button className="secondary" onClick={() => void showRun(compareRightRun.runId)}>查看证据</button></article></div>
+            <div className="comparison-metrics"><div className="metric-improved"><span>改进</span><strong>{comparison.counts.improved}</strong></div><div className="metric-regressed"><span>回归</span><strong>{comparison.counts.regressed}</strong></div><div><span>保持通过</span><strong>{comparison.counts.stablePass}</strong></div><div><span>缺失配对</span><strong>{comparison.counts.missing}</strong></div><div><span>墙钟变化</span><strong>{comparison.wallTimeDeltaMs === null ? "unknown" : `${comparison.wallTimeDeltaMs >= 0 ? "+" : "−"}${formatDuration(Math.abs(comparison.wallTimeDeltaMs))}`}</strong></div></div>
+            <div className="condition-comparison"><h3>条件指标</h3>{comparison.conditionDeltas.map((condition) => <div key={condition.condition}><b>{condition.condition}</b><span>{percent(condition.left)}</span><i>→</i><span>{percent(condition.right)}</span><strong>{condition.delta === null ? "unknown" : `${condition.delta >= 0 ? "+" : ""}${(condition.delta * 100).toFixed(1)}pp`}</strong></div>)}</div>
+            <div className="paired-results"><div className="detail-section-head"><div><span className="section-label">PAIRED RESULTS</span><h3>逐题配对变化</h3></div><small>{comparison.rows.length} pairs</small></div>{comparison.rows.map((row) => <div className={`paired-row paired-${row.change}`} key={row.key}><span>{row.change}</span><b>{row.taskId}</b><code>{row.condition} · repeat {row.repeatIndex}</code><small>{row.leftOutcome ?? "missing"} → {row.rightOutcome ?? "missing"}</small></div>)}</div>
+            <p className="measurement-note">配对键为 task、profile、condition 和 repeat。描述性比较会保留观察到的改进/回归，但不会生成 Skill 因果结论。</p>
+          </div>}
+        </>}
       </section>
       <section className="agents">
         <div className="section-head"><div><span className="section-label">LOCAL AGENTS</span><h2>本机 Agent</h2></div><button className="refresh" onClick={() => void load(true)} disabled={loading}>{loading ? "探测中…" : "↻ 重新探测"}</button></div>

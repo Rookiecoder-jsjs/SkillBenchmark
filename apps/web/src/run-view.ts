@@ -16,7 +16,7 @@ export interface TraceEventLike {
 }
 
 interface TrialLike {
-  spec: { trial_id: string; task_id: string; condition_id: string; repeat_index: number };
+  spec: { trial_id: string; task_id: string; profile_id: string; condition_id: string; repeat_index: number };
   receipt: {
     status: string;
     started_at: string;
@@ -44,6 +44,21 @@ export interface RunDetailSource {
   finishedAt: string | null;
   events: RunEventLike[];
   report: ReportLike | null;
+}
+
+export interface ComparisonPlanSource {
+  suite: { digest: string };
+  agent: { id: string; model: string };
+  bindings: { candidate?: { versionId: string; treeDigest: string } };
+  corePlan: {
+    fingerprint: string;
+    profiles: Array<{ config_digest: string }>;
+    conditions: string[];
+    repeats: number;
+    budget: { max_trials: number; max_attempts: number; concurrency: number; timeout_ms: number; max_duration_ms?: number };
+    mode: string;
+    load_method: string;
+  };
 }
 
 export interface EventPresentation {
@@ -125,5 +140,76 @@ export function buildRunDetailView(run: RunDetailSource, now = Date.now()) {
     contrasts: (report?.summary.contrasts ?? []).filter((contrast) => contrast.comparable_trials > 0),
     trials,
     timeline,
+  };
+}
+
+function comparableJson(value: unknown): string { return JSON.stringify(value); }
+
+function trialKey(result: TrialLike): string {
+  return `${result.spec.task_id}|${result.spec.profile_id}|${result.spec.condition_id}|${result.spec.repeat_index}`;
+}
+
+function scoredValue(result: TrialLike | undefined): number | null {
+  if (!result || result.grade.outcome === "ungradable") return null;
+  return result.grade.metrics.exact_match;
+}
+
+export function buildRunComparison(leftRun: RunDetailSource, rightRun: RunDetailSource, leftPlan: ComparisonPlanSource, rightPlan: ComparisonPlanSource) {
+  const reasons: string[] = [];
+  if (!leftRun.report || !rightRun.report) reasons.push("最终报告缺失");
+  if (leftPlan.suite.digest !== rightPlan.suite.digest) reasons.push("Suite 不一致");
+  if (leftPlan.agent.id !== rightPlan.agent.id) reasons.push("Agent 不一致");
+  if (leftPlan.agent.model !== rightPlan.agent.model) reasons.push("模型不一致");
+  if (comparableJson(leftPlan.corePlan.profiles.map((profile) => profile.config_digest)) !== comparableJson(rightPlan.corePlan.profiles.map((profile) => profile.config_digest))) reasons.push("Runner 配置不一致");
+  if (comparableJson(leftPlan.corePlan.conditions) !== comparableJson(rightPlan.corePlan.conditions)) reasons.push("条件矩阵不一致");
+  if (leftPlan.corePlan.repeats !== rightPlan.corePlan.repeats) reasons.push("重复次数不一致");
+  if (comparableJson(leftPlan.corePlan.budget) !== comparableJson(rightPlan.corePlan.budget)) reasons.push("预算不一致");
+  if (leftPlan.corePlan.mode !== rightPlan.corePlan.mode || leftPlan.corePlan.load_method !== rightPlan.corePlan.load_method) reasons.push("执行模式不一致");
+  const leftSkill = leftPlan.bindings.candidate;
+  const rightSkill = rightPlan.bindings.candidate;
+  const skillChanged = Boolean(leftSkill?.treeDigest && rightSkill?.treeDigest && leftSkill.treeDigest !== rightSkill.treeDigest);
+  const comparability = reasons.length ? "descriptive" as const : skillChanged ? "skill-effect" as const : "repeatability" as const;
+
+  const leftResults = new Map((leftRun.report?.results ?? []).map((result) => [trialKey(result), result]));
+  const rightResults = new Map((rightRun.report?.results ?? []).map((result) => [trialKey(result), result]));
+  const keys = [...new Set([...leftResults.keys(), ...rightResults.keys()])].sort();
+  const rows = keys.map((key) => {
+    const left = leftResults.get(key);
+    const right = rightResults.get(key);
+    const leftScore = scoredValue(left);
+    const rightScore = scoredValue(right);
+    const change = leftScore === null || rightScore === null ? "missing" as const : rightScore > leftScore ? "improved" as const : rightScore < leftScore ? "regressed" as const : rightScore === 1 ? "stable-pass" as const : "stable-fail" as const;
+    const source = left ?? right!;
+    return { key, taskId: source.spec.task_id, profileId: source.spec.profile_id, condition: source.spec.condition_id, repeatIndex: source.spec.repeat_index, leftOutcome: left?.grade.outcome ?? null, rightOutcome: right?.grade.outcome ?? null, leftScore, rightScore, change };
+  });
+  const counts = { improved: 0, regressed: 0, stablePass: 0, stableFail: 0, missing: 0 };
+  for (const row of rows) {
+    if (row.change === "improved") counts.improved += 1;
+    else if (row.change === "regressed") counts.regressed += 1;
+    else if (row.change === "stable-pass") counts.stablePass += 1;
+    else if (row.change === "stable-fail") counts.stableFail += 1;
+    else counts.missing += 1;
+  }
+  const leftConditions = leftRun.report?.summary.by_condition ?? {};
+  const rightConditions = rightRun.report?.summary.by_condition ?? {};
+  const conditionDeltas = [...new Set([...Object.keys(leftConditions), ...Object.keys(rightConditions)])].sort().map((condition) => {
+    const left = leftConditions[condition]?.success_rate ?? null;
+    const right = rightConditions[condition]?.success_rate ?? null;
+    return { condition, left, right, delta: left === null || right === null ? null : right - left };
+  });
+  const leftWallTimeMs = elapsed(leftRun.startedAt, leftRun.finishedAt);
+  const rightWallTimeMs = elapsed(rightRun.startedAt, rightRun.finishedAt);
+  return {
+    comparability,
+    reasons,
+    skillChanged,
+    leftSkill,
+    rightSkill,
+    counts,
+    rows,
+    conditionDeltas,
+    leftWallTimeMs,
+    rightWallTimeMs,
+    wallTimeDeltaMs: leftWallTimeMs === null || rightWallTimeMs === null ? null : rightWallTimeMs - leftWallTimeMs,
   };
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRunDetailView, eventPresentation, formatDuration } from "../apps/web/src/run-view.ts";
+import { buildRunComparison, buildRunDetailView, eventPresentation, formatDuration } from "../apps/web/src/run-view.ts";
 
 test("run detail view derives honest timing, condition metrics and trial evidence", () => {
   const view = buildRunDetailView({
@@ -16,8 +16,8 @@ test("run detail view derives honest timing, condition metrics and trial evidenc
         contrasts: [{ left: "none", right: "candidate", effect: 1, comparable_trials: 1 }],
       },
       results: [
-        { spec: { trial_id: "trial-none", task_id: "task-1", condition_id: "none", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:01.000Z", finished_at: "2026-09-16T00:00:03.000Z", artifact: { output: "wrong", output_sha256: "abc" }, failure_reason: null }, grade: { outcome: "fail", metrics: { exact_match: 0 } }, events: [] },
-        { spec: { trial_id: "trial-candidate", task_id: "task-1", condition_id: "candidate", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:02.000Z", finished_at: "2026-09-16T00:00:05.000Z", artifact: { output: "done", output_sha256: "def" }, failure_reason: null }, grade: { outcome: "pass", metrics: { exact_match: 1 } }, events: [] },
+        { spec: { trial_id: "trial-none", task_id: "task-1", profile_id: "codex", condition_id: "none", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:01.000Z", finished_at: "2026-09-16T00:00:03.000Z", artifact: { output: "wrong", output_sha256: "abc" }, failure_reason: null }, grade: { outcome: "fail", metrics: { exact_match: 0 } }, events: [] },
+        { spec: { trial_id: "trial-candidate", task_id: "task-1", profile_id: "codex", condition_id: "candidate", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:02.000Z", finished_at: "2026-09-16T00:00:05.000Z", artifact: { output: "done", output_sha256: "def" }, failure_reason: null }, grade: { outcome: "pass", metrics: { exact_match: 1 } }, events: [] },
       ],
     },
   });
@@ -43,4 +43,48 @@ test("event presentation recognizes platform tool events without inventing unava
   assert.equal(unknown.detail, null);
   assert.equal(formatDuration(null), "unknown");
   assert.equal(formatDuration(65_432), "1m 5.4s");
+});
+
+const comparisonPlan = (overrides: Record<string, unknown> = {}) => ({
+  suite: { digest: "suite-a" },
+  agent: { id: "codex", model: "gpt-test" },
+  bindings: { candidate: { versionId: "version-a", treeDigest: "skill-a" } },
+  corePlan: { fingerprint: "fingerprint-a", profiles: [{ config_digest: "config-a" }], conditions: ["candidate"], repeats: 1, budget: { max_trials: 2, max_attempts: 4, concurrency: 1, timeout_ms: 30_000, max_duration_ms: 60_000 }, mode: "controlled", load_method: "explicit-file-read" },
+  ...overrides,
+});
+
+const comparisonRun = (runId: string, scores: number[]) => ({
+  runId,
+  status: "completed",
+  createdAt: "2026-09-16T00:00:00.000Z",
+  startedAt: "2026-09-16T00:00:01.000Z",
+  finishedAt: "2026-09-16T00:00:05.000Z",
+  events: [],
+  report: {
+    summary: { by_condition: { candidate: { total: 2, passed: scores.filter(Boolean).length, success_rate: scores.filter(Boolean).length / 2 } }, contrasts: [] },
+    results: scores.map((score, index) => ({ spec: { trial_id: `${runId}-${index}`, task_id: `task-${index + 1}`, profile_id: "codex", condition_id: "candidate", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:01.000Z", finished_at: "2026-09-16T00:00:02.000Z", artifact: null, failure_reason: null }, grade: { outcome: score ? "pass" : "fail", metrics: { exact_match: score } }, events: [] })),
+  },
+});
+
+test("run comparison attributes paired changes only when configuration matches and Skill changes", () => {
+  const leftPlan = comparisonPlan();
+  const rightPlan = comparisonPlan({ bindings: { candidate: { versionId: "version-b", treeDigest: "skill-b" } } });
+  const comparison = buildRunComparison(comparisonRun("run-left", [0, 1]), comparisonRun("run-right", [1, 0]), leftPlan, rightPlan);
+
+  assert.equal(comparison.comparability, "skill-effect");
+  assert.deepEqual(comparison.reasons, []);
+  assert.equal(comparison.counts.improved, 1);
+  assert.equal(comparison.counts.regressed, 1);
+  assert.equal(comparison.conditionDeltas[0]?.delta, 0);
+  assert.deepEqual(comparison.rows.map((row) => row.change), ["improved", "regressed"]);
+});
+
+test("run comparison becomes descriptive when model or Suite differs", () => {
+  const rightPlan = comparisonPlan({ suite: { digest: "suite-b" }, agent: { id: "codex", model: "other-model" }, bindings: { candidate: { versionId: "version-b", treeDigest: "skill-b" } } });
+  const comparison = buildRunComparison(comparisonRun("run-left", [0, 1]), comparisonRun("run-right", [1, 1]), comparisonPlan(), rightPlan);
+
+  assert.equal(comparison.comparability, "descriptive");
+  assert.ok(comparison.reasons.includes("Suite 不一致"));
+  assert.ok(comparison.reasons.includes("模型不一致"));
+  assert.equal(comparison.counts.improved, 1, "descriptive views may show observations without claiming causality");
 });
