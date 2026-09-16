@@ -14,6 +14,8 @@ import { executePlanAsync } from "../../../packages/core/src/scheduler.ts";
 import { applyValidationGate, buildEvidenceView, createCandidateSnapshot, maintainWiki, writeEvolutionArtifacts } from "../../../packages/core/src/evolution.ts";
 import { FileRegistry } from "../../../packages/core/src/registry.ts";
 import { cleanupActiveSubprocesses } from "../../../packages/core/src/subprocess.ts";
+import { resolveWorkspaceRoot } from "../../local-server/src/discovery.ts";
+import { startLocalWorkbench } from "../../local-server/src/server.ts";
 
 const root = resolve(import.meta.dirname, "../../../");
 const demoSuite = resolve(root, "suites/smoke/suite.json");
@@ -27,7 +29,30 @@ function shutdown(exitCode: number): void {
 }
 process.once("SIGINT", () => shutdown(130));
 process.once("SIGTERM", () => shutdown(143));
-const usage = `SkillBenchmark v0.1\n\n用法:\n  npm run demo                         运行内置 smoke Suite\n  npm run skillbenchmark -- plan <suite.json> [output-dir]\n  npm run skillbenchmark -- run <suite.json> [output-dir]\n  npm run skillbenchmark -- run-adapter <codex|claude-code> <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- snapshot <skill-dir>\n  npm run skillbenchmark -- profile inspect <codex|claude-code>\n  npm run skillbenchmark -- evolve <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- proposal show <proposal.json>\n  npm run skillbenchmark -- compare <report.json>\n  npm run skillbenchmark -- release publish <skill-dir> <gate.json> <registry-dir>\n  npm run skillbenchmark -- release export <registry-dir> <release-id> <platform> <output-dir>\n  npm run skillbenchmark -- release rollback <registry-dir> <release-id> [expected-current-digest]\n`;
+const usage = `SkillBenchmark v0.1\n\n用法:\n  npm run dev                          启动本地 Web 工作台\n  npm run demo                         运行内置 smoke Suite\n  npm run skillbenchmark -- ui [--workspace <dir>] [--port <port>] [--no-open]\n  npm run skillbenchmark -- plan <suite.json> [output-dir]\n  npm run skillbenchmark -- run <suite.json> [output-dir]\n  npm run skillbenchmark -- run-adapter <codex|claude-code> <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- snapshot <skill-dir>\n  npm run skillbenchmark -- profile inspect <codex|claude-code>\n  npm run skillbenchmark -- evolve <suite.json> <skill-dir> [output-dir]\n  npm run skillbenchmark -- proposal show <proposal.json>\n  npm run skillbenchmark -- compare <report.json>\n  npm run skillbenchmark -- release publish <skill-dir> <gate.json> <registry-dir>\n  npm run skillbenchmark -- release export <registry-dir> <release-id> <platform> <output-dir>\n  npm run skillbenchmark -- release rollback <registry-dir> <release-id> [expected-current-digest]\n`;
+
+function uiOptions(args: string[]): { workspace?: string; port: number; openBrowser: boolean } {
+  let workspace: string | undefined;
+  let port = 4317;
+  let openBrowser = true;
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === "--no-open") { openBrowser = false; continue; }
+    if (value === "--workspace") {
+      workspace = args[++index];
+      if (!workspace) throw new Error("--workspace 需要目录路径");
+      continue;
+    }
+    if (value === "--port") {
+      const parsed = Number(args[++index]);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) throw new Error("--port 必须是 0 到 65535 的整数");
+      port = parsed;
+      continue;
+    }
+    throw new Error(`未知 ui 参数：${value}`);
+  }
+  return { workspace, port, openBrowser };
+}
 
 async function run(suitePath: string, outputDir: string): Promise<void> {
   const suite = await loadSuite(suitePath);
@@ -125,6 +150,14 @@ async function release(args: string[]): Promise<void> {
 async function main(): Promise<void> {
   const [command, arg, outputArg] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help") return console.log(usage);
+  if (command === "ui") {
+    const options = uiOptions(process.argv.slice(3));
+    const workspaceRoot = resolveWorkspaceRoot({ explicit: options.workspace, initCwd: process.env.INIT_CWD, cwd: process.cwd() });
+    const workbench = await startLocalWorkbench({ workspaceRoot, port: options.port, openBrowser: options.openBrowser });
+    console.log(`SkillBenchmark 工作台已启动：${workbench.browserUrl}`);
+    console.log(`工作区：${workspaceRoot}`);
+    return;
+  }
   if (command === "demo") return run(demoSuite, resolve(root, ".skillbenchmark/runs/demo"));
   if (command === "skill" && arg === "import") {
     if (!outputArg) throw new Error("skill import 需要 skill-dir");

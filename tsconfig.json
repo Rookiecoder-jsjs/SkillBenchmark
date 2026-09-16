@@ -5,7 +5,8 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": true
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tests/**/*.ts"]
 }

@@ -2,6 +2,10 @@
 
 状态：P0-P4 首版工程链路已实现，真实平台和生产隔离验证待在目标 Worker 上执行。按可验证的交付物推进；阶段序号不等于固定工期。
 
+下一阶段按[本地可视化工作台架构](local-workbench-architecture.md)中的 W1–W4 推进：工作台与资产 → Codex 实时运行 → 对比与版本管理 → Claude Code 一致性验证。以下 P0–P4 是已有首版模块的工程记录，不能视为新工作台或真实多版本演化已经完成；必要改造见新架构第 12 节。
+
+W1 第一条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 React 工作台，保留启动 Workspace，展示有界的 Codex/Claude Code 安装与版本探测，并使用启动令牌、Host/Origin 校验和安全响应头保护本地 API。Skill 导入、不可变版本和测试集资产仍属于 W1 后续工作。
+
 ## 当前实现进度
 
 已落地本地可验证闭环：
@@ -14,7 +18,7 @@
 - P2 已实现 controlled/native/coexistence 的计划字段、加载方法、Profile 内统计和 Claude native 插件路径；Codex native 在能力不支持时明确拒绝。
 - P3 已实现 train/validation EvidenceView、Wiki 假设、父版本不变的候选快照、diff 和三态 validation gate。
 - P4 已实现本地 Registry 发布、导出收据、乐观并发检查、回滚、插件清单和 MCP JSON-RPC 桥接。
-- `tests/` 覆盖 18 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
+- `tests/` 覆盖 27 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 
@@ -34,7 +38,7 @@
 | P3：演化闭环 | 训练 EvidenceView、Wiki、Proposal、validation/回归门禁 | 代码与回归测试已实现；真实分析模型接入和多轮预算策略留作后续增强 |
 | P4：插件分发 | 两端管理 Skill/清单、CLI/MCP 桥接、版本导出 | 本地插件清单、MCP 工具和 Registry 已实现；宿主平台安装包发布仍需按平台打包验证 |
 
-P0/P1 使用 smoke Suite 验证工程；进入正式效果声明前增加足够任务族并校准统计政策。P3 已完成，用户可以使用完整的手工版本评测和候选门禁链路。
+P0/P1 使用 smoke Suite 验证工程；进入正式效果声明前增加足够任务族并校准统计政策。P3 提供候选快照和门禁的演示链路；当前 `evolve` 使用 mock 与固定指导段落，真实不同 Skill 版本绑定、分析模型接入和候选再评测仍需按新架构落实。
 
 ## 3. P0 可直接拆分的工作
 

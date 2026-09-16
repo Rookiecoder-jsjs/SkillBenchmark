@@ -18,8 +18,11 @@
 
 ## 设计文档
 
+下一阶段产品形态为“本地启动即打开网页的 Skill 评测工作台”，详见[本地可视化工作台架构](docs/local-workbench-architecture.md)。W1 的第一条竖切片已经可运行：本地网页、启动工作区和 Codex/Claude Code 探测已接通；Skill 导入、可视化运行和历史对比仍按该架构继续实现。
+
 | 文档 | 解决的问题 |
 | --- | --- |
+| [本地可视化工作台架构](docs/local-workbench-architecture.md) | 网页流程、本机 Agent 探测、实时执行、历史对比、版本管理及落地步骤 |
 | [项目架构](docs/architecture.md) | 产品边界、模块职责、部署和目录结构 |
 | [评测协议](docs/evaluation-protocol.md) | 对照组、评分、数据隔离、统计与版本门禁 |
 | [数据与接口契约](docs/contracts.md) | Skill、Suite、Run、Trial、事件与版本状态 |
@@ -44,9 +47,13 @@
 需要 Node.js 22 或更高版本（Node 原生运行当前 TypeScript 源码）：
 
 ```bash
+npm install
+npm run dev
 npm test
 npm run demo
 ```
+
+`npm run dev` 以启动命令所在目录作为 Workspace，在 `127.0.0.1:4317` 启动本地服务并打开工作台。也可使用 `npm run skillbenchmark -- ui --workspace <dir> --port <port> --no-open` 明确指定目录、端口或禁止自动打开浏览器。当前页面提供工作区和本机 Agent 探测；尚未接通的入口会在界面中标注。
 
 `npm run demo` 会运行 `suites/smoke/suite.json`，并将 `plan.json`、`report.json`、`report.md`、`report.html` 和 SQLite 索引写入被 Git 忽略的 `.skillbenchmark/runs/demo/`。
 
@@ -75,7 +82,7 @@ npm run skillbenchmark -- release rollback .skillbenchmark/registry <release-id>
 
 ## 参与开发
 
-先阅读[贡献指南](CONTRIBUTING.md)，再按[实施计划](docs/implementation-plan.md)推进。当前只使用 Node 内置模块，无需安装运行时依赖；`npm test` 是现有的自动化验证命令。
+先阅读[贡献指南](CONTRIBUTING.md)，再按[实施计划](docs/implementation-plan.md)推进。Web 工作台使用 React 与 Vite，依赖由 `package-lock.json` 锁定；`npm test`、`npm run typecheck` 和 `npm run build:web` 是现有的自动化验证命令。
 
 - [AGENT.md](AGENT.md)：共享的 Agent 协作规范。
 - [AGENTS.md](AGENTS.md)：Codex 等工具的项目规则入口。

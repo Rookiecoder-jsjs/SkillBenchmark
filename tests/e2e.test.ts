@@ -63,7 +63,7 @@ test("end-to-end evolve and release workflows preserve lineage and export receip
   const exportDir = join(root, "export");
   const exported = await runCli(["release", "export", registry, secondRelease, "claude-code", exportDir]);
   assert.equal(exported.code, 0, exported.stderr);
-  assert.equal(JSON.parse(await readFile(join(exportDir, "export-receipt.json"))).platform, "claude-code");
+  assert.equal(JSON.parse(await readFile(join(exportDir, "export-receipt.json"), "utf8")).platform, "claude-code");
   const rolledBack = await runCli(["release", "rollback", registry, firstRelease]);
   assert.equal(rolledBack.code, 0, rolledBack.stderr);
   assert.match(rolledBack.stdout, /rolled back to/);
