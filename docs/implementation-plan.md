@@ -10,7 +10,7 @@ W2 前两条竖切片已实现：运行服务从冻结计划生成独立 Run，�
 
 W3 三条竖切片已实现：对比页可选择两次已完成 Run，按 `task_id | profile_id | condition_id | repeat_index` 配对，展示改进、回归、稳定通过/失败、缺失配对、条件指标和墙钟变化。Suite、Agent/模型、Runner 配置、条件、重复次数、预算或加载方式不一致时仅生成描述性观察；严格对齐后再区分 Skill 版本效果与相同 Skill 的重复性。评测计划可选择同一 Skill 的两个不同版本，冻结 `none / incumbent / candidate` 三组条件；运行服务把两个不可变版本物化到独立目录，最终报告优先展示 `incumbent → candidate` 增益、回归和三态门禁。对比 Run ID 写入 URL，刷新后从持久化报告恢复。Skill 详情现提供每个 Skill 独立的发布指针、Run/Decision 证据关联、Codex/Claude Code 受控导出与无损回滚；发布前重新校验完整 Trial 矩阵、冻结 Plan/Suite/候选摘要并重算 Gate，旧指针通过乐观锁防止并发覆盖。完整 SQLite Release/Export 资源和跨设备分发仍属后续增强。
 
-W4 前两条竖切片已实现：Codex 与 Claude Code 的结构化事件归一为 session/result/tool/message/error，ExecutionReceipt 保存请求模型、平台回报模型、会话、token 和费用（平台缺失时保持 unknown）。工作台提供用户显式触发的有界连接验证作业，固定最小提示、隔离临时目录、输出上限、超时和同 Agent 并发保护；结果持久化但不保存登录凭证或原始验证事件。Agent 卡片按启动、认证、结构化输出、隔离目录、会话/模型/用量/费用收据、工具事件、超时与取消展示能力矩阵，并区分 discovery、connection 和 adapter-conformance 三种证据来源。Codex `turn.failed/error` 与 item 消息/工具分类、Claude system/assistant/result 语义已有独立夹具回归。验证成功只把 authentication 置为 ready，evaluationSupport 仍为 exploratory；真实账号的一致性矩阵尚未执行。
+W4 三条竖切片已实现：Codex 与 Claude Code 的结构化事件归一为 session/result/tool/message/error，ExecutionReceipt 保存请求模型、平台回报模型、会话、token 和费用（平台缺失时保持 unknown）。工作台提供用户显式触发的连接验证和完整一致性验证；后者要求选择模型、确认可能费用，逐项持久化收据、受限只读工具、超时和取消结果，支持进度查询与用户取消，并禁止同 Agent 并发验证。Agent 卡片按 discovery、connection 和 adapter-conformance 分开显示证据；只有全部必需检查及实际模型、会话、用量和费用均有证据时才升级 evaluationSupport。自动化使用 fake Agent，不调用真实账号；真实 Codex/Claude 矩阵尚需用户主动执行。
 
 ## 当前实现进度
 

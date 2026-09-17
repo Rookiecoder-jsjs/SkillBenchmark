@@ -13,10 +13,10 @@ export interface AgentCapabilityEvidence {
 }
 
 interface VerificationEvidence {
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   finishedAt: string | null;
   authentication: "unknown" | "ready" | "required" | "failed";
-  checks: { exactOutput: boolean; structuredResult: boolean; isolatedWorkspace: boolean; toolEvents?: boolean };
+  checks: { exactOutput: boolean; structuredResult: boolean; isolatedWorkspace: boolean; toolEvents?: boolean; timeoutControl?: boolean; cancellationControl?: boolean };
   receipt: { requested_model?: string; reported_model: string | null; session_id: string | null; input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null } | null;
   error: string | null;
 }
@@ -47,7 +47,11 @@ export function buildAgentCapabilityMatrix(agent: AgentDiscovery, verification: 
     verification?.checks.toolEvents
       ? { id: "tool-events", label: "工具事件", status: "verified", source: "connection", observedAt: verification.finishedAt, detail: "最近一次验证观察到平台工具事件" }
       : { id: "tool-events", label: "工具事件", status: "exploratory", source: "connection", observedAt: verification?.finishedAt ?? null, detail: "最小连接验证禁用工具，不据此判断本机工具事件能力" },
-    { id: "timeout-control", label: "超时终止", status: "verified", source: "adapter-conformance", observedAt: null, detail: "Adapter 自动化测试已覆盖；不代表当前本机 CLI 已实测" },
-    { id: "cancellation-control", label: "取消与进程清理", status: "verified", source: "adapter-conformance", observedAt: null, detail: "Adapter 自动化测试已覆盖；不代表当前本机 CLI 已实测" },
+    verification?.checks.timeoutControl
+      ? { id: "timeout-control", label: "超时终止", status: "verified", source: "connection", observedAt: verification.finishedAt, detail: "一致性验证已在当前本机 CLI 上观察到超时终止" }
+      : { id: "timeout-control", label: "超时终止", status: "verified", source: "adapter-conformance", observedAt: null, detail: "Adapter 自动化测试已覆盖；不代表当前本机 CLI 已实测" },
+    verification?.checks.cancellationControl
+      ? { id: "cancellation-control", label: "取消与进程清理", status: "verified", source: "connection", observedAt: verification.finishedAt, detail: "一致性验证已在当前本机 CLI 上观察到取消终止" }
+      : { id: "cancellation-control", label: "取消与进程清理", status: "verified", source: "adapter-conformance", observedAt: null, detail: "Adapter 自动化测试已覆盖；不代表当前本机 CLI 已实测" },
   ];
 }

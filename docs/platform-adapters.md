@@ -1,6 +1,6 @@
 # 跨平台插件与执行器
 
-状态：首版 Adapter、统一收据与能力矩阵已实现，真实平台完整一致性验证仍待目标 Worker 实测。核对时间：2026-09-17。已验证官方文档、本机 CLI 帮助和双平台 fake CLI 事件夹具。
+状态：首版 Adapter、统一收据、能力矩阵与用户触发的一致性验证作业已实现，真实平台结果仍待用户主动实测。核对时间：2026-09-17。已验证官方文档、本机 CLI 帮助和双平台 fake CLI 事件夹具。
 
 ## 1. 兼容性分层
 
@@ -94,6 +94,8 @@ v0.1 优先验证两端均能实现的 `explicit-file-read`：固定公开包路
 工作台的“验证连接”是显式、小预算真实调用：固定要求返回一个常量，不读取 Skill 或项目文件，在 Workspace 下的临时目录运行，并限制超时、输出和同 Agent 并发。Claude Code 额外限制单轮、预算和工具；Codex 使用只读 sandbox。验证记录只保存终态、请求/实际模型、会话和平台报告的用量，不保存凭证或原始事件。成功仅证明当前认证和结构化结果可用，不能替代一致性矩阵，因此 `evaluationSupport` 保持 `exploratory`。
 
 能力矩阵把本机探测、连接验证和 Adapter 自动化夹具分开。Codex 夹具覆盖 `thread.started`、`item.*`、`turn.completed`、`turn.failed` 与用量；Claude 夹具覆盖 system init、assistant/tool_use、result、会话、模型、用量与费用。当前 Codex JSONL 未保证报告实际模型时，模型收据显示 `not-reported`，不会用请求模型冒充实际模型。连接验证禁用工具，因此没有工具事件只保留 exploratory，不判定 unsupported。
+
+“完整一致性验证”与连接验证分开：用户选择模型并确认可能费用后，服务在隔离临时目录中依次执行结构化收据、受限只读工具、硬超时和取消探针，每一步即时持久化且可由用户取消。默认单 Agent 串行、单次输出上限 256 KiB；原始模型输出和登录材料不入库。作业成功不自动等于 `evaluationSupport=verified`：实际模型、会话、用量或费用任一缺失时仍保持 exploratory。
 
 ## 8. 可比性与降级
 

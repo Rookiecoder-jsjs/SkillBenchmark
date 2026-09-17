@@ -122,3 +122,53 @@ test("agent verification bounds timeout and persists cancellation on shutdown", 
   assert.equal(reopened.get(started.verificationId).status, "failed");
   await reopened.close();
 });
+
+test("full consistency verification requires consent and persists live capability checks", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "skillbenchmark-agent-consistency-"));
+  const fakeRunner = resolve("tests/fixtures/fake-runner.mjs");
+  const store = new WorkspaceAgentVerificationStore(workspace, {
+    adapterFactory: () => new SubprocessRunnerAdapter("fake", process.execPath, "claude-code", (prompt) => [fakeRunner, prompt.includes("SKILLBENCHMARK_TOOL_PROBE") ? prompt : prompt.includes("SKILLBENCHMARK_TIMEOUT_PROBE") || prompt.includes("SKILLBENCHMARK_CANCEL_PROBE") ? prompt : `PLATFORM_RECEIPT ${prompt}`]),
+    timeoutMs: 1_000,
+    probeTimeoutMs: 30,
+    cancelAfterMs: 20,
+  });
+  assert.throws(() => store.startConsistency(installedAgent, { model: "claude-requested", acknowledgeModelUsage: false }), /confirm model usage/i);
+  const started = store.startConsistency(installedAgent, { model: "claude-requested", acknowledgeModelUsage: true });
+  assert.equal(started.kind, "consistency");
+  assert.equal(started.userAcknowledgedModelUsage, true);
+  const completed = await store.wait(started.verificationId);
+  assert.equal(completed.status, "succeeded");
+  assert.equal(completed.evaluationSupport, "verified");
+  assert.deepEqual(completed.steps.map((step) => [step.id, step.status]), [
+    ["receipt", "passed"],
+    ["tool-events", "passed"],
+    ["timeout-control", "passed"],
+    ["cancellation-control", "passed"],
+  ]);
+  const matrix = new Map(completed.capabilityMatrix.map((capability) => [capability.id, capability]));
+  assert.equal(matrix.get("tool-events")?.source, "connection");
+  assert.equal(matrix.get("timeout-control")?.source, "connection");
+  assert.equal(matrix.get("cancellation-control")?.source, "connection");
+  await store.close();
+
+  const reopened = new WorkspaceAgentVerificationStore(workspace);
+  assert.equal(reopened.latestConsistency("claude-code")?.verificationId, started.verificationId);
+  await reopened.close();
+});
+
+test("full consistency verification can be cancelled without leaving an active job", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "skillbenchmark-agent-consistency-cancel-"));
+  const fakeRunner = resolve("tests/fixtures/fake-runner.mjs");
+  const store = new WorkspaceAgentVerificationStore(workspace, {
+    adapterFactory: () => new SubprocessRunnerAdapter("fake", process.execPath, "claude-code", (prompt) => [fakeRunner, `TIMEOUT ${prompt}`]),
+    timeoutMs: 10_000,
+  });
+  const started = store.startConsistency(installedAgent, { model: "default", acknowledgeModelUsage: true });
+  const cancelling = store.cancel(started.verificationId);
+  assert.equal(cancelling.status, "cancelling");
+  const cancelled = await store.wait(started.verificationId);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.evaluationSupport, "exploratory");
+  assert.throws(() => store.cancel(started.verificationId), /not running/i);
+  await store.close();
+});

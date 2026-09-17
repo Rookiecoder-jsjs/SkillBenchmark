@@ -7,12 +7,16 @@ import "./styles.css";
 interface Workspace { name: string; root: string }
 interface AgentVerification {
   verificationId: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  agentId: string;
+  kind: "connection" | "consistency";
+  status: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   createdAt: string;
   finishedAt: string | null;
   requestedModel: string;
   authentication: "unknown" | "ready" | "required" | "failed";
-  evaluationSupport: "exploratory";
+  evaluationSupport: "exploratory" | "verified";
+  userAcknowledgedModelUsage: boolean;
+  steps: Array<{ id: "receipt" | "tool-events" | "timeout-control" | "cancellation-control"; status: "pending" | "running" | "passed" | "failed" | "not-reported" | "cancelled"; startedAt: string | null; finishedAt: string | null; detail: string }>;
   receipt: { requested_model: string; reported_model: string | null; session_id: string | null; input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null } | null;
   error: string | null;
 }
@@ -35,6 +39,7 @@ interface Agent {
   capabilities: string[];
   evidence: string[];
   lastVerification: AgentVerification | null;
+  lastConsistencyVerification: AgentVerification | null;
   capabilityMatrix: AgentCapabilityEvidence[];
 }
 interface ManifestEntry { path: string; sha256: string; bytes: number; executable: boolean; symlink?: string }
@@ -63,8 +68,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function AgentCard({ agent, verifying, onVerify }: { agent: Agent; verifying: boolean; onVerify: (agentId: string) => void }) {
+function AgentCard({ agent, verifying, consistencyJob, onVerify, onConsistency, onCancelConsistency }: { agent: Agent; verifying: boolean; consistencyJob?: AgentVerification; onVerify: (agentId: string) => void; onConsistency: (agentId: string, model: string) => void; onCancelConsistency: (verificationId: string) => void }) {
+  const [consistencyOpen, setConsistencyOpen] = useState(false);
+  const [model, setModel] = useState("default");
+  const [acknowledged, setAcknowledged] = useState(false);
   const installed = agent.installation === "found";
+  const consistency = consistencyJob ?? agent.lastConsistencyVerification;
+  const consistencyActive = consistency ? ["queued", "running", "cancelling"].includes(consistency.status) : false;
   const status = installed ? "已安装" : agent.installation === "broken" ? "不可用" : "未发现";
   const authentication = agent.authentication === "ready" ? "连接可用" : agent.authentication === "required" ? "需要登录" : agent.authentication === "failed" ? "验证失败" : "未验证";
   const support = agent.evaluationSupport === "verified" ? "评测已验证" : agent.evaluationSupport === "exploratory" ? "评测能力探索中" : "暂不支持评测";
@@ -80,7 +90,9 @@ function AgentCard({ agent, verifying, onVerify }: { agent: Agent; verifying: bo
       <div className="agent-status-row"><span className={`pill ${agent.authentication === "ready" ? "success" : agent.authentication === "required" || agent.authentication === "failed" ? "danger" : "muted"}`}>{authentication}</span><span className="pill muted">{support}</span></div>
       {agent.lastVerification && <div className="agent-receipt"><span>{agent.lastVerification.status === "succeeded" ? "最近验证成功" : agent.lastVerification.error ?? "最近验证失败"}</span><code>模型 {receipt?.reported_model ?? agent.lastVerification.requestedModel} · token {receipt?.input_tokens ?? "?"}/{receipt?.output_tokens ?? "?"}{receipt?.estimated_cost !== null && receipt?.estimated_cost !== undefined ? ` · $${receipt.estimated_cost.toFixed(4)}` : ""}</code></div>}
       <details className="agent-diagnostics"><summary>查看能力诊断 <span>{agent.capabilityMatrix.filter((item) => item.status === "verified").length}/{agent.capabilityMatrix.length}</span></summary><div className="capability-matrix">{agent.capabilityMatrix.map((capability) => <div className="capability-row" key={capability.id}><div><strong>{capability.label}</strong><small>{sourceLabel(capability.source)}</small></div><span className={`capability-${capability.status}`}>{capabilityLabel(capability.status)}</span><p>{capability.detail}</p></div>)}</div></details>
-      <button type="button" className="secondary agent-verify" disabled={!installed || verifying} onClick={() => onVerify(agent.id)}>{verifying ? "验证中…" : "验证连接"}</button>
+      <div className="agent-actions"><button type="button" className="secondary agent-verify" disabled={!installed || verifying || consistencyActive} onClick={() => onVerify(agent.id)}>{verifying ? "验证中…" : "验证连接"}</button><button type="button" className="secondary agent-verify" disabled={!installed || verifying || consistencyActive} onClick={() => setConsistencyOpen((value) => !value)}>{consistencyActive ? "一致性验证中…" : "完整一致性验证"}</button></div>
+      {consistencyOpen && !consistencyActive && <div className="consistency-setup"><label>测试模型<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="default" /></label><label className="consistency-consent"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} /><span>我确认将发起 4 个有界真实请求，可能产生少量模型费用。</span></label><button type="button" disabled={!acknowledged || !model.trim()} onClick={() => onConsistency(agent.id, model)}>开始一致性验证</button></div>}
+      {consistency && <div className="consistency-progress"><div><strong>最近一致性验证</strong><span className={`pill ${consistency.status === "succeeded" ? "success" : consistencyActive ? "muted" : "danger"}`}>{consistency.status}</span></div>{consistency.steps.map((step) => <div className="consistency-step" key={step.id}><span>{step.id}</span><b>{step.status}</b><small>{step.detail}</small></div>)}{consistencyActive && <button type="button" className="danger-button" disabled={consistency.status === "cancelling"} onClick={() => onCancelConsistency(consistency.verificationId)}>{consistency.status === "cancelling" ? "取消中…" : "取消验证"}</button>}{consistency.error && !consistencyActive && <p>{consistency.error}</p>}</div>}
     </div>
   </article>;
 }
@@ -141,6 +153,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [verifyingAgent, setVerifyingAgent] = useState("");
+  const [consistencyJobs, setConsistencyJobs] = useState<Record<string, AgentVerification>>({});
   const [verificationError, setVerificationError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -252,6 +265,20 @@ function App() {
     } catch (cause) { setVerificationError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setVerifyingAgent(""); }
   }, [agents]);
+  const runConsistencyVerification = useCallback(async (agentId: string, model: string) => {
+    setVerificationError("");
+    try {
+      const started = await api<AgentVerification>(`/api/v1/agents/${agentId}/consistency-verifications`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, acknowledgeModelUsage: true }) });
+      setConsistencyJobs((current) => ({ ...current, [agentId]: started }));
+    } catch (cause) { setVerificationError(cause instanceof Error ? cause.message : String(cause)); }
+  }, []);
+  const cancelConsistencyVerification = useCallback(async (verificationId: string) => {
+    setVerificationError("");
+    try {
+      const current = await api<AgentVerification>(`/api/v1/agent-verifications/${verificationId}/cancel`, { method: "POST" });
+      setConsistencyJobs((jobs) => ({ ...jobs, [current.agentId]: current }));
+    } catch (cause) { setVerificationError(cause instanceof Error ? cause.message : String(cause)); }
+  }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const requested = new URL(window.location.href).searchParams.get("run");
@@ -264,6 +291,19 @@ function App() {
     const timer = window.setInterval(() => { void api<{ runs: WorkbenchRun[] }>("/api/v1/runs").then((result) => setRuns(result.runs)).catch(() => undefined); }, 750);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    const candidates = new Map<string, AgentVerification>();
+    for (const agent of agents) if (agent.lastConsistencyVerification && ["queued", "running", "cancelling"].includes(agent.lastConsistencyVerification.status)) candidates.set(agent.id, agent.lastConsistencyVerification);
+    for (const [agentId, job] of Object.entries(consistencyJobs)) if (["queued", "running", "cancelling"].includes(job.status)) candidates.set(agentId, job);
+    if (candidates.size === 0) return;
+    const timer = window.setInterval(() => {
+      for (const [agentId, job] of candidates) void api<AgentVerification>(`/api/v1/agent-verifications/${job.verificationId}`).then(async (current) => {
+        setConsistencyJobs((jobs) => ({ ...jobs, [agentId]: current }));
+        if (["succeeded", "failed", "cancelled"].includes(current.status)) setAgents((await api<{ agents: Agent[] }>("/api/v1/agents")).agents);
+      }).catch((cause) => setVerificationError(cause instanceof Error ? cause.message : String(cause)));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [agents, consistencyJobs]);
   useEffect(() => {
     if (!selectedRunId || !runDetail || !["queued", "running", "cancelling"].includes(runDetail.status)) return;
     const timer = window.setInterval(() => { void api<WorkbenchRunDetail>(`/api/v1/runs/${selectedRunId}`).then(setRunDetail).catch(() => undefined); }, 750);
@@ -498,11 +538,11 @@ function App() {
           </div>}
         </>}
       </section>
-      <section className="agents">
+      <section className="agents" id="settings">
         <div className="section-head"><div><span className="section-label">LOCAL AGENTS</span><h2>本机 Agent</h2></div><button className="refresh" onClick={() => void load(true)} disabled={loading}>{loading ? "探测中…" : "↻ 重新探测"}</button></div>
-        <div className="agent-grid">{agents.map((agent) => <AgentCard agent={agent} verifying={verifyingAgent === agent.id} onVerify={verifyAgent} key={agent.id} />)}</div>
+        <div className="agent-grid">{agents.map((agent) => <AgentCard agent={agent} verifying={verifyingAgent === agent.id} consistencyJob={consistencyJobs[agent.id]} onVerify={verifyAgent} onConsistency={runConsistencyVerification} onCancelConsistency={cancelConsistencyVerification} key={agent.id} />)}</div>
         {verificationError && <div className="error compact">{verificationError}</div>}
-        <p className="notice">自动探测只检查本机可执行文件和版本，不会读取或保存登录凭证。“验证连接”由你手动触发，会向所选 Agent 发起一次极小的真实模型请求，可能产生少量费用；成功只代表当前登录和结构化输出可用，评测能力仍标记为探索中。</p>
+        <p className="notice">自动探测不会读取或保存登录凭证。“验证连接”发起一次极小请求；“完整一致性验证”只有在你选择模型并确认费用后才会启动，最多执行 4 个有界请求，逐项验证收据、只读工具、超时与取消。平台未报告实际模型或费用时仍保持探索状态。</p>
       </section>
     </main>
     {selectedRunId && <RunDetailModal run={runDetail} plan={plans.find((plan) => plan.planId === runDetail?.planId)} loading={runDetailLoading} error={runDetailError} onClose={closeRun} />}

@@ -119,12 +119,19 @@ function verificationInput(body: Record<string, unknown>): { model: string } {
   return { model: typeof body.model === "string" ? body.model : "default" };
 }
 
-function agentWithVerification(agent: AgentDiscovery, verification: AgentVerification | null): AgentDiscovery & { lastVerification: AgentVerification | null; capabilityMatrix: ReturnType<typeof buildAgentCapabilityMatrix> } {
+function consistencyVerificationInput(body: Record<string, unknown>): { model: string; acknowledgeModelUsage: boolean } {
+  if (body.model !== undefined && typeof body.model !== "string") throw new Error("model must be a string");
+  if (body.acknowledgeModelUsage !== true) throw new Error("acknowledgeModelUsage must be true before starting live consistency verification");
+  return { model: typeof body.model === "string" ? body.model : "default", acknowledgeModelUsage: true };
+}
+
+function agentWithVerification(agent: AgentDiscovery, verification: AgentVerification | null, consistencyVerification: AgentVerification | null): AgentDiscovery & { lastVerification: AgentVerification | null; lastConsistencyVerification: AgentVerification | null; capabilityMatrix: ReturnType<typeof buildAgentCapabilityMatrix> } {
   return {
     ...agent,
     authentication: verification?.authentication ?? agent.authentication,
-    evaluationSupport: agent.installation === "found" ? "exploratory" : agent.evaluationSupport,
+    evaluationSupport: consistencyVerification?.evaluationSupport === "verified" ? "verified" : agent.installation === "found" ? "exploratory" : agent.evaluationSupport,
     lastVerification: verification,
+    lastConsistencyVerification: consistencyVerification,
     capabilityMatrix: buildAgentCapabilityMatrix(agent, verification),
   };
 }
@@ -253,8 +260,9 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/plans") {
           try {
             const input = planInput(await readJsonBody(request));
-            const agent = agents.find((item) => item.id === input.agentId);
-            if (!agent) throw new Error("Selected Agent was not discovered");
+            const discoveredAgent = agents.find((item) => item.id === input.agentId);
+            if (!discoveredAgent) throw new Error("Selected Agent was not discovered");
+            const agent = agentWithVerification(discoveredAgent, verificationStore!.latest(discoveredAgent.id), verificationStore!.latestConsistency(discoveredAgent.id));
             const plan = planStore!.createPlan({ name: input.name, experimentType: input.experimentType, suiteVersion: suiteStore!.getVersion(input.suiteVersionId), incumbentVersion: input.incumbentVersionId ? skillStore!.getVersion(input.incumbentVersionId) : undefined, candidateVersion: skillStore!.getVersion(input.candidateVersionId), agent, model: input.model, repeats: input.repeats, timeoutMs: input.timeoutMs, concurrency: input.concurrency });
             return sendJson(response, 201, plan);
           } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Plan creation failed" }); }
@@ -275,7 +283,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
           try { return sendJson(response, 200, runStore!.getRun(runMatch[1])); }
           catch { return sendJson(response, 404, { error: "Run not found" }); }
         }
-        if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id))) });
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id), verificationStore!.latestConsistency(agent.id))) });
         const agentVerifyMatch = requestUrl.pathname.match(/^\/api\/v1\/agents\/(codex|claude-code)\/verify$/);
         if (request.method === "POST" && agentVerifyMatch) {
           try {
@@ -285,10 +293,24 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
             return sendJson(response, 202, verificationStore!.start(agent, input.model));
           } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Connection verification failed to start" }); }
         }
+        const agentConsistencyMatch = requestUrl.pathname.match(/^\/api\/v1\/agents\/(codex|claude-code)\/consistency-verifications$/);
+        if (request.method === "POST" && agentConsistencyMatch) {
+          try {
+            const agent = agents.find((item) => item.id === agentConsistencyMatch[1]);
+            if (!agent) return sendJson(response, 404, { error: "Agent not found" });
+            const input = consistencyVerificationInput(await readJsonBody(request));
+            return sendJson(response, 202, verificationStore!.startConsistency(agent, input));
+          } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Consistency verification failed to start" }); }
+        }
         const verificationMatch = requestUrl.pathname.match(/^\/api\/v1\/agent-verifications\/(agent-verification-[0-9a-f-]{36})$/);
         if (request.method === "GET" && verificationMatch) {
           try { return sendJson(response, 200, verificationStore!.get(verificationMatch[1])); }
           catch { return sendJson(response, 404, { error: "Connection verification not found" }); }
+        }
+        const verificationCancelMatch = requestUrl.pathname.match(/^\/api\/v1\/agent-verifications\/(agent-verification-[0-9a-f-]{36})\/cancel$/);
+        if (request.method === "POST" && verificationCancelMatch) {
+          try { return sendJson(response, 202, verificationStore!.cancel(verificationCancelMatch[1])); }
+          catch (error) { return sendJson(response, 409, { error: error instanceof Error ? error.message : "Agent verification is not running" }); }
         }
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/agents/refresh") {
           const now = Date.now();
@@ -296,7 +318,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
             refresh = discoverAgents({ workspaceRoot: options.workspaceRoot, commands: options.agentCommands });
             try { agents = await refresh; lastRefreshAt = Date.now(); } finally { refresh = null; }
           } else if (refresh) agents = await refresh;
-          return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id))) });
+          return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id), verificationStore!.latestConsistency(agent.id))) });
         }
         return sendJson(response, 404, { error: "not found" });
       }

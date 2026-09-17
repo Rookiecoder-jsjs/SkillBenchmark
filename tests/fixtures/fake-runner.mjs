@@ -13,11 +13,15 @@ if (prompt.includes("INFRA_RETRY") && process.env.SKILLBENCHMARK_ATTEMPT === "1"
 if (prompt.includes("HUGE_OUTPUT")) {
   process.stdout.write("x".repeat(5 * 1024 * 1024));
 }
-if (prompt.includes("TIMEOUT")) {
+if (prompt.includes("TIMEOUT") || prompt.includes("SKILLBENCHMARK_TIMEOUT_PROBE") || prompt.includes("SKILLBENCHMARK_CANCEL_PROBE")) {
   setTimeout(() => {}, 10_000);
 } else {
   const output = prompt.includes("SKILLBENCHMARK_CONNECTION_OK") ? "SKILLBENCHMARK_CONNECTION_OK" : prompt.includes("REAL_FAIL") ? "wrong" : "real ok";
-  if (prompt.includes("CODEX_DIALECT")) {
+  if (prompt.includes("SKILLBENCHMARK_TOOL_PROBE")) {
+    process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "consistency-tool", model: "claude-test-actual" }) + "\n");
+    process.stdout.write(JSON.stringify({ type: "assistant", message: { model: "claude-test-actual", content: [{ type: "tool_use", name: "Read", input: { file_path: process.env.SKILLBENCHMARK_INPUT } }] } }) + "\n");
+    process.stdout.write(JSON.stringify({ type: "result", result: "SKILLBENCHMARK_TOOL_OK", session_id: "consistency-tool", total_cost_usd: 0.001, usage: { input_tokens: 4, output_tokens: 2 } }) + "\n");
+  } else if (prompt.includes("CODEX_DIALECT")) {
     process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-thread-test" }) + "\n");
     process.stdout.write(JSON.stringify({ type: "item.started", item: { id: "item-tool", type: "command_execution", command: "pwd" } }) + "\n");
     process.stdout.write(JSON.stringify({ type: "item.completed", item: { id: "item-message", type: "agent_message", text: output } }) + "\n");

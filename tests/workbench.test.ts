@@ -106,6 +106,14 @@ echo '{"type":"turn.completed","model":"codex-test","result":"SKILLBENCHMARK_CON
   const invalidVerification = await fetch(`${workbench.origin}/api/v1/agents/codex/verify`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "bad model; echo no" }) });
   assert.equal(invalidVerification.status, 400);
 
+  const unconfirmedConsistency = await fetch(`${workbench.origin}/api/v1/agents/codex/consistency-verifications`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "default", acknowledgeModelUsage: false }) });
+  assert.equal(unconfirmedConsistency.status, 400);
+  const startedConsistency = await fetch(`${workbench.origin}/api/v1/agents/codex/consistency-verifications`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "default", acknowledgeModelUsage: true }) });
+  assert.equal(startedConsistency.status, 202);
+  const consistencyStart = await startedConsistency.json() as { verificationId: string };
+  const cancelledConsistency = await fetch(`${workbench.origin}/api/v1/agent-verifications/${consistencyStart.verificationId}/cancel`, { method: "POST", headers });
+  assert.equal(cancelledConsistency.status, 202);
+
   const source = join(root, "sample-skill");
   await mkdir(source);
   await writeFile(join(source, "SKILL.md"), "# API Skill\n");

@@ -8,6 +8,8 @@ ExecutionReceipt 现可保存 `platform_receipt.requested_model/reported_model/s
 
 Agent API 同时返回逐项 `capabilityMatrix`。每项包含稳定 ID、状态、证据来源、观测时间和解释；状态区分 `verified / exploratory / not-reported / unsupported`，来源区分 `discovery / connection / adapter-conformance`。`not-reported` 表示平台在该次成功调用中没有给出字段，不等于零值或不支持；Adapter 自动测试证据也不能冒充当前本机 CLI 的真实验证。
 
+完整一致性验证使用 `POST /agents/:id/consistency-verifications` 创建作业，请求必须包含测试模型和 `acknowledgeModelUsage: true`。`GET /agent-verifications/:id` 返回四项步骤的持久化状态；`POST /agent-verifications/:id/cancel` 只取消仍由当前服务管理的活动作业。作业不保存原始事件、提示响应或登录凭证，只保存受限收据、步骤状态和脱敏诊断。
+
 ## 1. 通用规则
 
 - 所有记录带 `schema_version`；不兼容字段变化提升主版本，不静默迁移历史证据。
