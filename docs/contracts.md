@@ -4,6 +4,8 @@
 
 下一阶段的 Workspace、SkillVersion、Condition 版本绑定、Attempt、实时事件游标与 HTTP API 见[本地可视化工作台架构](local-workbench-architecture.md)。Workspace、Agent、Skill、Suite、Plan、Run 与每 Skill 发布视图已形成首版本地 HTTP API；Plan 保存精确的 Condition → SkillVersion 绑定及请求模型，模型同时进入 RunnerProfile、配置摘要和比较指纹。`version-comparison` 计划要求 incumbent 与 candidate 来自同一 Skill 的两个不同不可变版本，并冻结 `none / incumbent / candidate` 三组条件；执行时分别物化绑定版本，不能让两个条件共享可变源目录。Run 保存状态、Trial 进度、受限的实时事件窗口及最终报告，并支持取消；详情读取最终报告中的条件汇总、逐题 ExecutionReceipt、Grade、TraceEvent、输出产物和 GateDecision，缺失字段不由 UI 补造。工作台已能通过现有 `GET /runs/:id` 同时读取两份已完成报告，按 Trial 身份配对并生成可重建的历史对比视图。发布接口只接受完成的 `version-comparison` Run，要求结果覆盖冻结 Trial 矩阵、Plan/Suite/候选摘要匹配，并用原政策重算 Gate 为 accept；Release 绑定 Run ID 与 Decision ID。每个 Skill 使用独立 current 指针和 `expectedCurrentDigest` 乐观锁，回滚追加事件；平台导出路径由服务生成在 Workspace 的 `.skillbenchmark/exports/` 中，不接受浏览器提供任意写入路径。比较要求 Suite 摘要、Agent/请求模型、Runner 配置摘要、条件、重复次数、预算、执行模式和加载方式一致才能作严格解释；否则只是描述性观察。独立跨 Run Comparison 资源、Attempt 资源、平台实际模型收据、持久化 Export 索引和游标式事件补流仍待版本化实现。本页下述目标字段/接口并非全部等同于现有 TypeScript 实现，实际差距与迁移要求列于新架构第 12 节。实现时应版本化迁移，不能给旧记录补造缺失证据。
 
+ExecutionReceipt 现可保存 `platform_receipt.requested_model/reported_model/session_id` 和平台报告的 token/费用；旧记录或平台未报告字段保持 unknown，不回填推断值。`POST /agents/:id/verify` 创建持久化连接验证，`GET /agent-verifications/:id` 查询终态，`GET /agents` 附带最近一次验证。连接验证只改变认证证据，不会单独把评测能力升级为 verified。
+
 ## 1. 通用规则
 
 - 所有记录带 `schema_version`；不兼容字段变化提升主版本，不静默迁移历史证据。

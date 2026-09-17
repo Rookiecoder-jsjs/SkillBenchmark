@@ -12,7 +12,17 @@
     "artifact": { "type": ["object", "null"] },
     "failure_reason": { "type": ["string", "null"] },
     "failure_kind": { "type": ["string", "null"], "enum": ["task", "infrastructure", "grader", "cancelled", null] },
-    "usage": { "type": ["object", "null"] }
+    "usage": { "type": ["object", "null"] },
+    "platform_receipt": {
+      "type": ["object", "null"],
+      "required": ["requested_model", "reported_model", "session_id"],
+      "properties": {
+        "requested_model": { "type": "string" },
+        "reported_model": { "type": ["string", "null"] },
+        "session_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

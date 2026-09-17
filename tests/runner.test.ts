@@ -35,6 +35,21 @@ test("Codex and Claude adapters pass a frozen non-default model as one argument"
   assert.deepEqual(claudeArgs.slice(claudeArgs.indexOf("--model"), claudeArgs.indexOf("--model") + 2), ["--model", "claude-sonnet-test"]);
 });
 
+test("subprocess adapter records reported model, session, usage and platform errors", async () => {
+  const fakeRunner = resolve("tests/fixtures/fake-runner.mjs");
+  const adapter = new SubprocessRunnerAdapter("fake", process.execPath, "claude-code", (prompt) => [fakeRunner, prompt]);
+  const environment = new LocalEnvironmentBackend(await mkdtemp(join(tmpdir(), "skillbenchmark-receipt-")));
+  const handle = await environment.provision({ trialId: "trial-receipt", conditionId: "none", publicInput: "PLATFORM_RECEIPT" });
+  const execution = await adapter.execute({ trial_id: "trial-receipt", run_id: "run", task_id: "task", profile_id: "claude", condition_id: "none", repeat_index: 1, attempt: 1 }, { task_id: "task", prompt: "PLATFORM_RECEIPT", mock_outputs: {} }, { environment: handle, model: "claude-requested", timeout_ms: 1000, load_method: "explicit-file-read", mode: "controlled" });
+  assert.deepEqual(execution.receipt.platform_receipt, { requested_model: "claude-requested", reported_model: "claude-test-actual", session_id: "session-test" });
+  assert.deepEqual(execution.receipt.usage, { input_tokens: 21, output_tokens: 8, estimated_cost: 0.0123 });
+  assert.ok(execution.events.some((event) => event.kind === "platform.session" && event.data.model === "claude-test-actual"));
+
+  const failed = await adapter.execute({ trial_id: "trial-error", run_id: "run", task_id: "task", profile_id: "claude", condition_id: "none", repeat_index: 1, attempt: 1 }, { task_id: "task", prompt: "PLATFORM_ERROR", mock_outputs: {} }, { environment: handle, model: "default", timeout_ms: 1000, load_method: "explicit-file-read", mode: "controlled" });
+  assert.equal(failed.receipt.status, "errored", "a structured platform error must not become a successful Trial");
+  await environment.destroy(handle);
+});
+
 test("async scheduler runs a real adapter through isolated environments", async () => {
   const suitePath = join(await mkdtemp(join(tmpdir(), "skillbenchmark-suite-real-")), "suite.json");
   await writeFile(suitePath, JSON.stringify({ suite_id: "real-smoke", tasks: [

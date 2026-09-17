@@ -23,6 +23,8 @@ interface TrialLike {
     finished_at: string;
     artifact: { output: string; output_sha256: string } | null;
     failure_reason: string | null;
+    platform_receipt?: { requested_model: string; reported_model: string | null; session_id: string | null };
+    usage?: { input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null };
   };
   grade: { outcome: string; metrics: { exact_match: number } };
   events: TraceEventLike[];
@@ -125,6 +127,8 @@ export function buildRunDetailView(run: RunDetailSource, now = Date.now()) {
     output: result.receipt.artifact?.output ?? null,
     outputSha256: result.receipt.artifact?.output_sha256 ?? null,
     failureReason: result.receipt.failure_reason,
+    platformReceipt: result.receipt.platform_receipt ?? null,
+    usage: result.receipt.usage ?? null,
   }));
   const aggregateTrialTimeMs = trials.reduce<number | null>((total, trial) => trial.durationMs === null ? total : (total ?? 0) + trial.durationMs, null);
   const reportEvents = reportResults.flatMap((result) => Array.isArray(result.events) ? result.events : []);

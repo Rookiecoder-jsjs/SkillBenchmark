@@ -10,6 +10,7 @@ import { publicSuiteVersion, WorkspaceSuiteStore } from "./suite-store.ts";
 import { WorkspacePlanStore, type ExperimentType } from "./plan-store.ts";
 import { WorkspaceReleaseStore, type ReleasePlatform } from "./release-store.ts";
 import { WorkspaceRunStore } from "./run-store.ts";
+import { WorkspaceAgentVerificationStore, type AgentVerification } from "./agent-verification-store.ts";
 
 export interface WorkbenchOptions {
   workspaceRoot: string;
@@ -112,6 +113,20 @@ function exportReleaseInput(body: Record<string, unknown>): { platform: ReleaseP
   return { platform: body.platform };
 }
 
+function verificationInput(body: Record<string, unknown>): { model: string } {
+  if (body.model !== undefined && typeof body.model !== "string") throw new Error("model must be a string");
+  return { model: typeof body.model === "string" ? body.model : "default" };
+}
+
+function agentWithVerification(agent: AgentDiscovery, verification: AgentVerification | null): AgentDiscovery & { lastVerification: AgentVerification | null } {
+  return {
+    ...agent,
+    authentication: verification?.authentication ?? agent.authentication,
+    evaluationSupport: agent.installation === "found" ? "exploratory" : agent.evaluationSupport,
+    lastVerification: verification,
+  };
+}
+
 function mutationErrorStatus(error: unknown): number {
   return error instanceof Error && error.message.includes("current digest changed") ? 409 : 400;
 }
@@ -129,6 +144,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
   let planStore: WorkspacePlanStore | null = null;
   let runStore: WorkspaceRunStore | null = null;
   let releaseStore: WorkspaceReleaseStore | null = null;
+  let verificationStore: WorkspaceAgentVerificationStore | null = null;
   try {
     if (options.serveWebApp !== false) {
       vite = await createViteServer({
@@ -143,7 +159,9 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     planStore = new WorkspacePlanStore(options.workspaceRoot);
     runStore = new WorkspaceRunStore(options.workspaceRoot, { planStore, suiteStore, skillStore });
     releaseStore = new WorkspaceReleaseStore(options.workspaceRoot, { planStore, runStore, skillStore });
+    verificationStore = new WorkspaceAgentVerificationStore(options.workspaceRoot);
   } catch (error) {
+    await verificationStore?.close();
     await runStore?.close();
     planStore?.close();
     suiteStore?.close();
@@ -255,14 +273,28 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
           try { return sendJson(response, 200, runStore!.getRun(runMatch[1])); }
           catch { return sendJson(response, 404, { error: "Run not found" }); }
         }
-        if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents });
+        if (request.method === "GET" && requestUrl.pathname === "/api/v1/agents") return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id))) });
+        const agentVerifyMatch = requestUrl.pathname.match(/^\/api\/v1\/agents\/(codex|claude-code)\/verify$/);
+        if (request.method === "POST" && agentVerifyMatch) {
+          try {
+            const agent = agents.find((item) => item.id === agentVerifyMatch[1]);
+            if (!agent) return sendJson(response, 404, { error: "Agent not found" });
+            const input = verificationInput(await readJsonBody(request));
+            return sendJson(response, 202, verificationStore!.start(agent, input.model));
+          } catch (error) { return sendJson(response, 400, { error: error instanceof Error ? error.message : "Connection verification failed to start" }); }
+        }
+        const verificationMatch = requestUrl.pathname.match(/^\/api\/v1\/agent-verifications\/(agent-verification-[0-9a-f-]{36})$/);
+        if (request.method === "GET" && verificationMatch) {
+          try { return sendJson(response, 200, verificationStore!.get(verificationMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Connection verification not found" }); }
+        }
         if (request.method === "POST" && requestUrl.pathname === "/api/v1/agents/refresh") {
           const now = Date.now();
           if (!refresh && now - lastRefreshAt >= 1_000) {
             refresh = discoverAgents({ workspaceRoot: options.workspaceRoot, commands: options.agentCommands });
             try { agents = await refresh; lastRefreshAt = Date.now(); } finally { refresh = null; }
           } else if (refresh) agents = await refresh;
-          return sendJson(response, 200, { agents });
+          return sendJson(response, 200, { agents: agents.map((agent) => agentWithVerification(agent, verificationStore!.latest(agent.id))) });
         }
         return sendJson(response, 404, { error: "not found" });
       }
@@ -283,6 +315,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
       server.listen(options.port ?? 4317, host, () => resolveListen());
     });
   } catch (error) {
+    await verificationStore?.close();
     await runStore?.close();
     planStore?.close();
     suiteStore?.close();
@@ -300,7 +333,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     token,
     close: async () => {
       try { await new Promise<void>((resolveClose, reject) => server.close((error?: Error) => error ? reject(error) : resolveClose())); }
-      finally { await runStore?.close(); planStore?.close(); suiteStore?.close(); skillStore?.close(); await vite?.close(); }
+      finally { await verificationStore?.close(); await runStore?.close(); planStore?.close(); suiteStore?.close(); skillStore?.close(); await vite?.close(); }
     },
   };
 }

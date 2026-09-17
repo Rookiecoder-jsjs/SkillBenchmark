@@ -147,6 +147,7 @@ export interface ExecutionReceipt {
   failure_reason: string | null;
   failure_kind?: "task" | "infrastructure" | "grader" | "cancelled" | null;
   usage?: { input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null };
+  platform_receipt?: { requested_model: string; reported_model: string | null; session_id: string | null };
 }
 
 export interface Grade {

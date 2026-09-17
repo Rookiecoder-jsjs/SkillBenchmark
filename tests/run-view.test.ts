@@ -16,7 +16,7 @@ test("run detail view derives honest timing, condition metrics and trial evidenc
         contrasts: [{ left: "none", right: "candidate", effect: 1, comparable_trials: 1 }],
       },
       results: [
-        { spec: { trial_id: "trial-none", task_id: "task-1", profile_id: "codex", condition_id: "none", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:01.000Z", finished_at: "2026-09-16T00:00:03.000Z", artifact: { output: "wrong", output_sha256: "abc" }, failure_reason: null }, grade: { outcome: "fail", metrics: { exact_match: 0 } }, events: [] },
+        { spec: { trial_id: "trial-none", task_id: "task-1", profile_id: "codex", condition_id: "none", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:01.000Z", finished_at: "2026-09-16T00:00:03.000Z", artifact: { output: "wrong", output_sha256: "abc" }, failure_reason: null, platform_receipt: { requested_model: "default", reported_model: "gpt-test", session_id: "session-1" }, usage: { input_tokens: 12, output_tokens: 3, estimated_cost: 0.001 } }, grade: { outcome: "fail", metrics: { exact_match: 0 } }, events: [] },
         { spec: { trial_id: "trial-candidate", task_id: "task-1", profile_id: "codex", condition_id: "candidate", repeat_index: 1 }, receipt: { status: "completed", started_at: "2026-09-16T00:00:02.000Z", finished_at: "2026-09-16T00:00:05.000Z", artifact: { output: "done", output_sha256: "def" }, failure_reason: null }, grade: { outcome: "pass", metrics: { exact_match: 1 } }, events: [] },
       ],
     },
@@ -29,6 +29,8 @@ test("run detail view derives honest timing, condition metrics and trial evidenc
   assert.equal(view.conditions[1]?.successRate, 1);
   assert.equal(view.contrasts[0]?.effect, 1);
   assert.equal(view.trials[0]?.repeatIndex, 1);
+  assert.equal(view.trials[0]?.platformReceipt?.reported_model, "gpt-test");
+  assert.equal(view.trials[0]?.usage?.input_tokens, 12);
   assert.deepEqual(view.trials.map((trial) => [trial.condition, trial.durationMs, trial.output]), [["none", 2_000, "wrong"], ["candidate", 3_000, "done"]]);
 });
 

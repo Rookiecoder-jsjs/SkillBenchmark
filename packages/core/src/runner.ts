@@ -13,6 +13,7 @@ export interface RunnerContext {
   mode: EvaluationMode;
   signal?: AbortSignal;
   on_event?: (event: TraceEvent) => void;
+  purpose?: "trial" | "verification";
 }
 
 export interface RunnerAdapter {
@@ -38,6 +39,36 @@ function textFrom(value: unknown): string | null {
     if (Array.isArray(content)) return content.map((part) => textFrom(part) ?? "").join("") || null;
   }
   return null;
+}
+
+function recordFrom(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function safePlatformValue(value: unknown, depth = 0): unknown {
+  if (depth > 5) return "[truncated]";
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => safePlatformValue(item, depth + 1));
+  const record = recordFrom(value);
+  if (!record) return value;
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => {
+    const normalized = key.toLowerCase();
+    const secret = /api.?key|authorization|password|secret|credential|access.?token|refresh.?token|id.?token/i.test(key) || normalized === "token";
+    return [key, secret ? "[redacted]" : safePlatformValue(item, depth + 1)];
+  }));
+}
+
+function numberFrom(record: Record<string, unknown> | null, keys: string[]): number | null {
+  for (const key of keys) if (typeof record?.[key] === "number" && Number.isFinite(record[key])) return record[key] as number;
+  return null;
+}
+
+function platformKind(parsed: Record<string, unknown>): string {
+  const type = typeof parsed.type === "string" ? parsed.type : "event";
+  if ((type === "system" && parsed.subtype === "init") || type === "thread.started") return "platform.session";
+  if (type === "result" || type === "turn.completed") return "platform.result";
+  if (/tool|command|item/i.test(type)) return "platform.tool";
+  if (/assistant|message/i.test(type)) return "platform.message";
+  return `platform.${type}`;
 }
 
 export class SubprocessRunnerAdapter implements RunnerAdapter {
@@ -68,6 +99,12 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
     let output = "";
     let seq = 3;
     let stdoutBuffer = "";
+    let reportedModel: string | null = null;
+    let sessionId: string | null = null;
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
+    let estimatedCost: number | null = null;
+    let platformFailed = false;
     const consumeLine = (line: string): void => {
       const trimmed = line.trim();
       if (!trimmed) return;
@@ -75,7 +112,17 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
         const parsed = JSON.parse(trimmed) as Record<string, unknown>;
         const candidate = textFrom(parsed);
         if (candidate !== null) output = candidate;
-        emit(event(seq++, `platform.${typeof parsed.type === "string" ? parsed.type : "event"}`, { raw: JSON.stringify(parsed).slice(0, 4096) }, "platform"));
+        const message = recordFrom(parsed.message);
+        const usage = recordFrom(parsed.usage) ?? recordFrom(message?.usage);
+        if (typeof parsed.model === "string") reportedModel = parsed.model;
+        else if (typeof message?.model === "string") reportedModel = message.model;
+        if (typeof parsed.session_id === "string") sessionId = parsed.session_id;
+        else if (typeof parsed.thread_id === "string") sessionId = parsed.thread_id;
+        inputTokens = numberFrom(usage, ["input_tokens", "inputTokens"]) ?? inputTokens;
+        outputTokens = numberFrom(usage, ["output_tokens", "outputTokens"]) ?? outputTokens;
+        estimatedCost = numberFrom(parsed, ["total_cost_usd", "cost_usd", "estimated_cost"]) ?? estimatedCost;
+        if (parsed.is_error === true || (typeof parsed.subtype === "string" && parsed.subtype.startsWith("error"))) platformFailed = true;
+        emit(event(seq++, platformKind(parsed), { raw: JSON.stringify(safePlatformValue(parsed)).slice(0, 4096), ...(reportedModel ? { model: reportedModel } : {}), ...(sessionId ? { session_id: sessionId } : {}), ...(usage ? { usage: safePlatformValue(usage) } : {}) }, "platform"));
       } catch { output = trimmed; }
     };
     const result = await runSubprocess({
@@ -100,38 +147,46 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
       },
     });
     consumeLine(stdoutBuffer);
+    const receiptMetadata = {
+      platform_receipt: { requested_model: context.model || "default", reported_model: reportedModel, session_id: sessionId },
+      ...((inputTokens !== null || outputTokens !== null || estimatedCost !== null) ? { usage: { input_tokens: inputTokens, output_tokens: outputTokens, estimated_cost: estimatedCost } } : {}),
+    };
     if (result.cancelled) {
       emit(event(seq, "trial.finished", { status: "cancelled", reason: "run cancelled" }));
-      return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "run cancelled", failure_kind: "cancelled" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "cancelled", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "run cancelled", failure_kind: "cancelled", ...receiptMetadata } };
     }
     if (result.outputLimitExceeded) {
       emit(event(seq, "trial.finished", { status: "errored", reason: "process output limit" }));
-      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process output limit exceeded", failure_kind: "task" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process output limit exceeded", failure_kind: "task", ...receiptMetadata } };
     }
     if (result.timedOut) {
       emit(event(seq, "trial.finished", { status: "timed_out", reason: "process timeout" }));
-      return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process timeout", failure_kind: "task" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "timed_out", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "process timeout", failure_kind: "task", ...receiptMetadata } };
     }
     if (result.spawnError) {
       emit(event(seq, "trial.finished", { status: "errored", reason: result.spawnError }));
-      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.spawnError, failure_kind: "infrastructure" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.spawnError, failure_kind: "infrastructure", ...receiptMetadata } };
     }
     if (result.code !== 0) {
       emit(event(seq, "trial.finished", { status: "errored", code: result.code, signal: result.signal, stderr: result.stderr.slice(0, 4096) }));
       const infrastructure = result.stderr.trim().startsWith("INFRASTRUCTURE");
-      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.signal ? `runner terminated by ${result.signal}` : `runner exited with code ${result.code}`, failure_kind: infrastructure ? "infrastructure" : "task" } };
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: result.signal ? `runner terminated by ${result.signal}` : `runner exited with code ${result.code}`, failure_kind: infrastructure ? "infrastructure" : "task", ...receiptMetadata } };
+    }
+    if (platformFailed) {
+      emit(event(seq, "trial.finished", { status: "errored", reason: "platform reported an error" }));
+      return { events, receipt: { trial_id: spec.trial_id, status: "errored", started_at: started, finished_at: new Date().toISOString(), artifact: null, failure_reason: "platform reported an error", failure_kind: "task", ...receiptMetadata } };
     }
     emit(event(seq++, "message.final", { output_bytes: Buffer.byteLength(output) }));
     emit(event(seq, "trial.finished", { status: "completed" }));
-    return { events, receipt: { trial_id: spec.trial_id, status: "completed", started_at: started, finished_at: new Date().toISOString(), artifact: { trial_id: spec.trial_id, output, output_sha256: sha256(output) }, failure_reason: null, failure_kind: null } };
+    return { events, receipt: { trial_id: spec.trial_id, status: "completed", started_at: started, finished_at: new Date().toISOString(), artifact: { trial_id: spec.trial_id, output, output_sha256: sha256(output) }, failure_reason: null, failure_kind: null, ...receiptMetadata } };
   }
 
 }
 
 export class CodexAdapter extends SubprocessRunnerAdapter {
-  constructor(command = "codex") { super("codex", command, "codex", (prompt, model) => ["exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", ...(model && model !== "default" ? ["--model", model] : []), prompt]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "coexistence"); }
+  constructor(command = "codex") { super("codex", command, "codex", (prompt, model, context) => ["exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", ...(context?.purpose === "verification" ? ["--sandbox", "read-only"] : []), ...(model && model !== "default" ? ["--model", model] : []), prompt]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "coexistence"); }
 }
 
 export class ClaudeCodeAdapter extends SubprocessRunnerAdapter {
-  constructor(command = "claude") { super("claude-code", command, "claude-code", (prompt, model, context) => ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(model && model !== "default" ? ["--model", model] : []), ...(context?.mode === "native" && context.environment.skill_path ? ["--plugin-dir", context.environment.skill_path] : [])]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "native", "coexistence"); }
+  constructor(command = "claude") { super("claude-code", command, "claude-code", (prompt, model, context) => ["-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(context?.purpose === "verification" ? ["--max-turns", "1", "--max-budget-usd", "0.05", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task"] : []), ...(model && model !== "default" ? ["--model", model] : []), ...(context?.mode === "native" && context.environment.skill_path ? ["--plugin-dir", context.environment.skill_path] : [])]); this.supportedModes.splice(0, this.supportedModes.length, "controlled", "native", "coexistence"); }
 }

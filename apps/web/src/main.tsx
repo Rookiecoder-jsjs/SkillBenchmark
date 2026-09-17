@@ -5,6 +5,17 @@ import { buildRunComparison, buildRunDetailView, formatDuration } from "./run-vi
 import "./styles.css";
 
 interface Workspace { name: string; root: string }
+interface AgentVerification {
+  verificationId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  createdAt: string;
+  finishedAt: string | null;
+  requestedModel: string;
+  authentication: "unknown" | "ready" | "required" | "failed";
+  evaluationSupport: "exploratory";
+  receipt: { requested_model: string; reported_model: string | null; session_id: string | null; input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null } | null;
+  error: string | null;
+}
 interface Agent {
   id: string;
   name: string;
@@ -15,6 +26,7 @@ interface Agent {
   version: string | null;
   capabilities: string[];
   evidence: string[];
+  lastVerification: AgentVerification | null;
 }
 interface ManifestEntry { path: string; sha256: string; bytes: number; executable: boolean; symlink?: string }
 interface SkillVersion { versionId: string; skillId: string; parentVersionId: string | null; ordinal: number; treeDigest: string; label: string; sourcePath: string; createdAt: string; fileManifest: ManifestEntry[] }
@@ -42,15 +54,21 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function AgentCard({ agent }: { agent: Agent }) {
+function AgentCard({ agent, verifying, onVerify }: { agent: Agent; verifying: boolean; onVerify: (agentId: string) => void }) {
   const installed = agent.installation === "found";
   const status = installed ? "已安装" : agent.installation === "broken" ? "不可用" : "未发现";
+  const authentication = agent.authentication === "ready" ? "连接可用" : agent.authentication === "required" ? "需要登录" : agent.authentication === "failed" ? "验证失败" : "未验证";
+  const support = agent.evaluationSupport === "verified" ? "评测已验证" : agent.evaluationSupport === "exploratory" ? "评测能力探索中" : "暂不支持评测";
+  const receipt = agent.lastVerification?.receipt;
   return <article className="agent-card">
     <div className={`agent-mark ${agent.id === "codex" ? "codex" : "claude"}`}>{agent.name.slice(0, 1)}</div>
     <div className="agent-copy">
       <div className="agent-title"><h3>{agent.name}</h3><span className={`pill ${installed ? "success" : agent.installation === "broken" ? "danger" : "muted"}`}>{status}</span></div>
       <p>{agent.version ?? "等待本机安装"}</p>
       <small>{agent.executablePath ?? agent.evidence[0]}</small>
+      <div className="agent-status-row"><span className={`pill ${agent.authentication === "ready" ? "success" : agent.authentication === "required" || agent.authentication === "failed" ? "danger" : "muted"}`}>{authentication}</span><span className="pill muted">{support}</span></div>
+      {agent.lastVerification && <div className="agent-receipt"><span>{agent.lastVerification.status === "succeeded" ? "最近验证成功" : agent.lastVerification.error ?? "最近验证失败"}</span><code>模型 {receipt?.reported_model ?? agent.lastVerification.requestedModel} · token {receipt?.input_tokens ?? "?"}/{receipt?.output_tokens ?? "?"}{receipt?.estimated_cost !== null && receipt?.estimated_cost !== undefined ? ` · $${receipt.estimated_cost.toFixed(4)}` : ""}</code></div>}
+      <button type="button" className="secondary agent-verify" disabled={!installed || verifying} onClick={() => onVerify(agent.id)}>{verifying ? "验证中…" : "验证连接"}</button>
     </div>
   </article>;
 }
@@ -76,7 +94,7 @@ function RunDetailModal({ run, plan, loading, error, onClose }: { run: Workbench
         {!run.report ? <div className="detail-loading">运行尚未生成最终报告；实时事件会持续刷新。</div> : <>
           <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">CONDITION SUMMARY</span><h3>条件表现</h3></div>{primaryContrast && <span className="effect-chip">{primaryContrast.left} → {primaryContrast.right} · {primaryContrast.effect === null ? "unknown" : `${primaryContrast.effect >= 0 ? "+" : ""}${(primaryContrast.effect * 100).toFixed(1)}pp`}</span>}</div><div className="condition-grid">{view.conditions.map((condition) => <div key={condition.condition}><span>{condition.condition}</span><strong>{percent(condition.successRate)}</strong><small>{condition.passed}/{condition.total} passed</small></div>)}</div></section>
           {run.report.gate && <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">VALIDATION GATE</span><h3>版本门禁</h3></div><span className={`pill ${run.report.gate.status === "accept" ? "success" : run.report.gate.status === "reject" ? "danger" : "muted"}`}>{run.report.gate.status.toUpperCase()}</span></div><ul className="gate-reasons">{run.report.gate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>}
-          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">TRIAL EVIDENCE</span><h3>逐题结果与产物</h3></div><small>{view.trials.length} Trials</small></div><div className="trial-results">{view.trials.map((trial) => <details key={trial.trialId} className="trial-result"><summary><span className={`outcome outcome-${trial.outcome}`}>{trial.outcome}</span><b>{trial.taskId}</b><code>{trial.condition} · repeat {trial.repeatIndex}</code><time>{formatDuration(trial.durationMs)}</time></summary><div className="trial-result-body">{trial.failureReason && <p className="failure-reason">{trial.failureReason}</p>}<div><span>状态</span><code>{trial.status}</code></div><div><span>Exact match</span><code>{trial.exactMatch}</code></div>{trial.outputSha256 && <div><span>输出摘要</span><code>{trial.outputSha256}</code></div>}<pre>{trial.output ?? "没有保存输出产物"}</pre></div></details>)}</div></section>
+          <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">TRIAL EVIDENCE</span><h3>逐题结果与产物</h3></div><small>{view.trials.length} Trials</small></div><div className="trial-results">{view.trials.map((trial) => <details key={trial.trialId} className="trial-result"><summary><span className={`outcome outcome-${trial.outcome}`}>{trial.outcome}</span><b>{trial.taskId}</b><code>{trial.condition} · repeat {trial.repeatIndex}</code><time>{formatDuration(trial.durationMs)}</time></summary><div className="trial-result-body">{trial.failureReason && <p className="failure-reason">{trial.failureReason}</p>}<div><span>状态</span><code>{trial.status}</code></div><div><span>Exact match</span><code>{trial.exactMatch}</code></div><div><span>请求 / 实际模型</span><code>{trial.platformReceipt?.requested_model ?? "unknown"} / {trial.platformReceipt?.reported_model ?? "unknown"}</code></div><div><span>平台会话</span><code>{trial.platformReceipt?.session_id ?? "unknown"}</code></div><div><span>Token / 费用</span><code>{trial.usage ? `${trial.usage.input_tokens ?? "?"} / ${trial.usage.output_tokens ?? "?"}${trial.usage.estimated_cost === null ? "" : ` · $${trial.usage.estimated_cost}`}` : "unknown"}</code></div>{trial.outputSha256 && <div><span>输出摘要</span><code>{trial.outputSha256}</code></div>}<pre>{trial.output ?? "没有保存输出产物"}</pre></div></details>)}</div></section>
         </>}
         <section className="detail-section"><div className="detail-section-head"><div><span className="section-label">EVENT TIMELINE</span><h3>Agent 与工具事件</h3></div><small>{view.timeline.length} events</small></div>{view.timeline.length === 0 ? <div className="detail-loading">等待平台事件…</div> : <div className="timeline">{view.timeline.map((event, index) => <details key={event.event_id ?? `${event.trial_id}-${event.seq}-${index}`} className={`timeline-event timeline-${event.category}`}><summary><time>{event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : "—"}</time><span>{event.category}</span><b>{event.label}</b><code>{event.trial_id?.split("-").slice(-4).join("-")}</code></summary><div><p>{event.detail ?? "平台未提供可展示的事件摘要"}</p><pre>{JSON.stringify(event.data, null, 2)}</pre></div></details>)}</div>}</section>
         <p className="measurement-note">耗时来自本机接收时间与执行收据；Trial 累计耗时在并发运行时不可当作 Run 总耗时。平台未报告的 token、费用或工具细节保持 unknown。</p>
@@ -110,6 +128,8 @@ function App() {
   const [exportReceipt, setExportReceipt] = useState<ExportReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [verifyingAgent, setVerifyingAgent] = useState("");
+  const [verificationError, setVerificationError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
@@ -201,6 +221,25 @@ function App() {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setLoading(false); }
   }, []);
+  const verifyAgent = useCallback(async (agentId: string) => {
+    setVerifyingAgent(agentId);
+    setVerificationError("");
+    try {
+      const started = await api<AgentVerification>(`/api/v1/agents/${agentId}/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "default" }) });
+      for (let attempt = 0; attempt < 140; attempt += 1) {
+        const current = await api<AgentVerification>(`/api/v1/agent-verifications/${started.verificationId}`);
+        if (current.status === "succeeded" || current.status === "failed") {
+          const result = await api<{ agents: Agent[] }>("/api/v1/agents");
+          setAgents(result.agents);
+          if (current.status === "failed") setVerificationError(`${agents.find((agent) => agent.id === agentId)?.name ?? agentId}：${current.error ?? "连接验证失败"}`);
+          return;
+        }
+        await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 500));
+      }
+      throw new Error("连接验证等待超时，请稍后重新探测状态");
+    } catch (cause) { setVerificationError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setVerifyingAgent(""); }
+  }, [agents]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const requested = new URL(window.location.href).searchParams.get("run");
@@ -449,8 +488,9 @@ function App() {
       </section>
       <section className="agents">
         <div className="section-head"><div><span className="section-label">LOCAL AGENTS</span><h2>本机 Agent</h2></div><button className="refresh" onClick={() => void load(true)} disabled={loading}>{loading ? "探测中…" : "↻ 重新探测"}</button></div>
-        <div className="agent-grid">{agents.map((agent) => <AgentCard agent={agent} key={agent.id} />)}</div>
-        <p className="notice">探测只检查本机可执行文件和版本，不会读取或保存登录凭证。连接资格会在真实运行前单独验证。</p>
+        <div className="agent-grid">{agents.map((agent) => <AgentCard agent={agent} verifying={verifyingAgent === agent.id} onVerify={verifyAgent} key={agent.id} />)}</div>
+        {verificationError && <div className="error compact">{verificationError}</div>}
+        <p className="notice">自动探测只检查本机可执行文件和版本，不会读取或保存登录凭证。“验证连接”由你手动触发，会向所选 Agent 发起一次极小的真实模型请求，可能产生少量费用；成功只代表当前登录和结构化输出可用，评测能力仍标记为探索中。</p>
       </section>
     </main>
     {selectedRunId && <RunDetailModal run={runDetail} plan={plans.find((plan) => plan.planId === runDetail?.planId)} loading={runDetailLoading} error={runDetailError} onClose={closeRun} />}

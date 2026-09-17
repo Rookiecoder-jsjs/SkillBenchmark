@@ -31,7 +31,14 @@ test("agent discovery records installation separately from authentication", asyn
 test("local workbench exposes authenticated same-origin workspace and discovery APIs", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "skillbenchmark-workbench-"));
   const fakeCodex = join(root, "codex");
-  await writeFile(fakeCodex, "#!/bin/sh\necho 'codex-cli test'\n");
+  await writeFile(fakeCodex, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 'codex-cli test'
+  exit 0
+fi
+echo '{"type":"thread.started","thread_id":"verify-api"}'
+echo '{"type":"turn.completed","model":"codex-test","result":"SKILLBENCHMARK_CONNECTION_OK","usage":{"input_tokens":1,"output_tokens":1}}'
+`);
   await chmod(fakeCodex, 0o755);
   const workbench = await startLocalWorkbench({
     workspaceRoot: root,
@@ -67,6 +74,34 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   const agents = await fetch(`${workbench.origin}/api/v1/agents`, { headers });
   assert.equal(agents.status, 200);
   assert.equal(((await agents.json() as { agents: Array<{ id: string; installation: string }> }).agents.find((agent) => agent.id === "codex"))?.installation, "found");
+
+  const unauthorizedVerification = await fetch(`${workbench.origin}/api/v1/agents/codex/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "default" }) });
+  assert.equal(unauthorizedVerification.status, 401);
+  const startedVerification = await fetch(`${workbench.origin}/api/v1/agents/codex/verify`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "default" }) });
+  assert.equal(startedVerification.status, 202);
+  const verificationStart = await startedVerification.json() as { verificationId: string };
+  type VerificationResponse = { status: string; authentication: string; evaluationSupport: string; receipt: null | { reported_model: string | null; session_id: string | null; input_tokens: number | null } };
+  let verification: VerificationResponse | null = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${workbench.origin}/api/v1/agent-verifications/${verificationStart.verificationId}`, { headers });
+    verification = await response.json() as VerificationResponse;
+    if (verification && ["succeeded", "failed"].includes(verification.status)) break;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  }
+  assert.equal(verification?.status, "succeeded");
+  assert.equal(verification?.authentication, "ready");
+  assert.equal(verification?.evaluationSupport, "exploratory", "one connection check must not claim verified evaluation support");
+  assert.equal(verification?.receipt?.reported_model, "codex-test");
+  assert.equal(verification?.receipt?.session_id, "verify-api");
+  assert.equal(verification?.receipt?.input_tokens, 1);
+  const verifiedAgents = await fetch(`${workbench.origin}/api/v1/agents`, { headers });
+  const verifiedCodex = (await verifiedAgents.json() as { agents: Array<{ id: string; authentication: string; evaluationSupport: string; lastVerification: { verificationId: string } | null }> }).agents.find((agent) => agent.id === "codex");
+  assert.equal(verifiedCodex?.authentication, "ready");
+  assert.equal(verifiedCodex?.evaluationSupport, "exploratory");
+  assert.equal(verifiedCodex?.lastVerification?.verificationId, verificationStart.verificationId);
+
+  const invalidVerification = await fetch(`${workbench.origin}/api/v1/agents/codex/verify`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "bad model; echo no" }) });
+  assert.equal(invalidVerification.status, 400);
 
   const source = join(root, "sample-skill");
   await mkdir(source);
