@@ -16,6 +16,14 @@ interface AgentVerification {
   receipt: { requested_model: string; reported_model: string | null; session_id: string | null; input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null } | null;
   error: string | null;
 }
+interface AgentCapabilityEvidence {
+  id: string;
+  label: string;
+  status: "verified" | "exploratory" | "not-reported" | "unsupported";
+  source: "discovery" | "connection" | "adapter-conformance";
+  observedAt: string | null;
+  detail: string;
+}
 interface Agent {
   id: string;
   name: string;
@@ -27,6 +35,7 @@ interface Agent {
   capabilities: string[];
   evidence: string[];
   lastVerification: AgentVerification | null;
+  capabilityMatrix: AgentCapabilityEvidence[];
 }
 interface ManifestEntry { path: string; sha256: string; bytes: number; executable: boolean; symlink?: string }
 interface SkillVersion { versionId: string; skillId: string; parentVersionId: string | null; ordinal: number; treeDigest: string; label: string; sourcePath: string; createdAt: string; fileManifest: ManifestEntry[] }
@@ -60,6 +69,8 @@ function AgentCard({ agent, verifying, onVerify }: { agent: Agent; verifying: bo
   const authentication = agent.authentication === "ready" ? "连接可用" : agent.authentication === "required" ? "需要登录" : agent.authentication === "failed" ? "验证失败" : "未验证";
   const support = agent.evaluationSupport === "verified" ? "评测已验证" : agent.evaluationSupport === "exploratory" ? "评测能力探索中" : "暂不支持评测";
   const receipt = agent.lastVerification?.receipt;
+  const capabilityLabel = (status: AgentCapabilityEvidence["status"]): string => status === "verified" ? "已验证" : status === "not-reported" ? "平台未提供" : status === "unsupported" ? "不可用" : "探索中";
+  const sourceLabel = (source: AgentCapabilityEvidence["source"]): string => source === "discovery" ? "本机探测" : source === "connection" ? "连接验证" : "Adapter 测试";
   return <article className="agent-card">
     <div className={`agent-mark ${agent.id === "codex" ? "codex" : "claude"}`}>{agent.name.slice(0, 1)}</div>
     <div className="agent-copy">
@@ -68,6 +79,7 @@ function AgentCard({ agent, verifying, onVerify }: { agent: Agent; verifying: bo
       <small>{agent.executablePath ?? agent.evidence[0]}</small>
       <div className="agent-status-row"><span className={`pill ${agent.authentication === "ready" ? "success" : agent.authentication === "required" || agent.authentication === "failed" ? "danger" : "muted"}`}>{authentication}</span><span className="pill muted">{support}</span></div>
       {agent.lastVerification && <div className="agent-receipt"><span>{agent.lastVerification.status === "succeeded" ? "最近验证成功" : agent.lastVerification.error ?? "最近验证失败"}</span><code>模型 {receipt?.reported_model ?? agent.lastVerification.requestedModel} · token {receipt?.input_tokens ?? "?"}/{receipt?.output_tokens ?? "?"}{receipt?.estimated_cost !== null && receipt?.estimated_cost !== undefined ? ` · $${receipt.estimated_cost.toFixed(4)}` : ""}</code></div>}
+      <details className="agent-diagnostics"><summary>查看能力诊断 <span>{agent.capabilityMatrix.filter((item) => item.status === "verified").length}/{agent.capabilityMatrix.length}</span></summary><div className="capability-matrix">{agent.capabilityMatrix.map((capability) => <div className="capability-row" key={capability.id}><div><strong>{capability.label}</strong><small>{sourceLabel(capability.source)}</small></div><span className={`capability-${capability.status}`}>{capabilityLabel(capability.status)}</span><p>{capability.detail}</p></div>)}</div></details>
       <button type="button" className="secondary agent-verify" disabled={!installed || verifying} onClick={() => onVerify(agent.id)}>{verifying ? "验证中…" : "验证连接"}</button>
     </div>
   </article>;

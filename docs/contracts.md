@@ -6,6 +6,8 @@
 
 ExecutionReceipt 现可保存 `platform_receipt.requested_model/reported_model/session_id` 和平台报告的 token/费用；旧记录或平台未报告字段保持 unknown，不回填推断值。`POST /agents/:id/verify` 创建持久化连接验证，`GET /agent-verifications/:id` 查询终态，`GET /agents` 附带最近一次验证。连接验证只改变认证证据，不会单独把评测能力升级为 verified。
 
+Agent API 同时返回逐项 `capabilityMatrix`。每项包含稳定 ID、状态、证据来源、观测时间和解释；状态区分 `verified / exploratory / not-reported / unsupported`，来源区分 `discovery / connection / adapter-conformance`。`not-reported` 表示平台在该次成功调用中没有给出字段，不等于零值或不支持；Adapter 自动测试证据也不能冒充当前本机 CLI 的真实验证。
+
 ## 1. 通用规则
 
 - 所有记录带 `schema_version`；不兼容字段变化提升主版本，不静默迁移历史证据。

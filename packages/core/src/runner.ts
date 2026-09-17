@@ -64,9 +64,17 @@ function numberFrom(record: Record<string, unknown> | null, keys: string[]): num
 
 function platformKind(parsed: Record<string, unknown>): string {
   const type = typeof parsed.type === "string" ? parsed.type : "event";
+  if (type === "turn.failed" || type === "error" || parsed.is_error === true || (typeof parsed.subtype === "string" && parsed.subtype.startsWith("error"))) return "platform.error";
   if ((type === "system" && parsed.subtype === "init") || type === "thread.started") return "platform.session";
   if (type === "result" || type === "turn.completed") return "platform.result";
-  if (/tool|command|item/i.test(type)) return "platform.tool";
+  const item = recordFrom(parsed.item);
+  const itemType = typeof item?.type === "string" ? item.type : "";
+  if (/agent_message|reasoning/i.test(itemType)) return "platform.message";
+  if (/command|file_change|mcp|collab|web_search|tool/i.test(itemType)) return "platform.tool";
+  const message = recordFrom(parsed.message);
+  const content = Array.isArray(message?.content) ? message.content : [];
+  if (content.some((part) => /tool/i.test(String(recordFrom(part)?.type ?? "")))) return "platform.tool";
+  if (/tool|command/i.test(type)) return "platform.tool";
   if (/assistant|message/i.test(type)) return "platform.message";
   return `platform.${type}`;
 }
@@ -121,8 +129,9 @@ export class SubprocessRunnerAdapter implements RunnerAdapter {
         inputTokens = numberFrom(usage, ["input_tokens", "inputTokens"]) ?? inputTokens;
         outputTokens = numberFrom(usage, ["output_tokens", "outputTokens"]) ?? outputTokens;
         estimatedCost = numberFrom(parsed, ["total_cost_usd", "cost_usd", "estimated_cost"]) ?? estimatedCost;
-        if (parsed.is_error === true || (typeof parsed.subtype === "string" && parsed.subtype.startsWith("error"))) platformFailed = true;
-        emit(event(seq++, platformKind(parsed), { raw: JSON.stringify(safePlatformValue(parsed)).slice(0, 4096), ...(reportedModel ? { model: reportedModel } : {}), ...(sessionId ? { session_id: sessionId } : {}), ...(usage ? { usage: safePlatformValue(usage) } : {}) }, "platform"));
+        const kind = platformKind(parsed);
+        if (kind === "platform.error") platformFailed = true;
+        emit(event(seq++, kind, { raw: JSON.stringify(safePlatformValue(parsed)).slice(0, 4096), ...(reportedModel ? { model: reportedModel } : {}), ...(sessionId ? { session_id: sessionId } : {}), ...(usage ? { usage: safePlatformValue(usage) } : {}) }, "platform"));
       } catch { output = trimmed; }
     };
     const result = await runSubprocess({

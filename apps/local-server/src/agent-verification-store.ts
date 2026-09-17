@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { LocalEnvironmentBackend } from "../../../packages/core/src/environment.ts";
 import { ClaudeCodeAdapter, CodexAdapter, type RunnerAdapter } from "../../../packages/core/src/runner.ts";
 import type { AgentDiscovery, AgentId } from "./discovery.ts";
+import { buildAgentCapabilityMatrix, type AgentCapabilityEvidence } from "./agent-capabilities.ts";
 
 export type AgentVerificationStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -18,8 +19,9 @@ export interface AgentVerification {
   requestedModel: string;
   authentication: "unknown" | "ready" | "required" | "failed";
   evaluationSupport: "exploratory";
-  checks: { exactOutput: boolean; structuredResult: boolean; isolatedWorkspace: boolean };
+  checks: { exactOutput: boolean; structuredResult: boolean; isolatedWorkspace: boolean; toolEvents: boolean };
   receipt: { requested_model: string; reported_model: string | null; session_id: string | null; input_tokens: number | null; output_tokens: number | null; estimated_cost: number | null } | null;
+  capabilityMatrix: AgentCapabilityEvidence[];
   error: string | null;
 }
 
@@ -97,8 +99,9 @@ export class WorkspaceAgentVerificationStore {
       requestedModel: safeModel(model),
       authentication: "unknown",
       evaluationSupport: "exploratory",
-      checks: { exactOutput: false, structuredResult: false, isolatedWorkspace: false },
+      checks: { exactOutput: false, structuredResult: false, isolatedWorkspace: false, toolEvents: false },
       receipt: null,
+      capabilityMatrix: buildAgentCapabilityMatrix(agent, null),
       error: null,
     };
     this.persist(verification);
@@ -128,6 +131,7 @@ export class WorkspaceAgentVerificationStore {
         { environment: handle, model: verification.requestedModel, timeout_ms: this.timeoutMs, max_output_bytes: 256 * 1024, load_method: "explicit-file-read", mode: "controlled", signal: controller.signal, purpose: "verification" },
       );
       verification.checks.structuredResult = execution.events.some((event) => event.kind === "platform.result");
+      verification.checks.toolEvents = execution.events.some((event) => event.kind === "platform.tool");
       verification.checks.exactOutput = execution.receipt.artifact?.output.trim() === EXPECTED_OUTPUT;
       const platform = execution.receipt.platform_receipt;
       verification.receipt = platform ? { ...platform, input_tokens: execution.receipt.usage?.input_tokens ?? null, output_tokens: execution.receipt.usage?.output_tokens ?? null, estimated_cost: execution.receipt.usage?.estimated_cost ?? null } : null;
@@ -146,6 +150,7 @@ export class WorkspaceAgentVerificationStore {
       verification.error = "Connection verification failed before a valid receipt was produced";
     } finally {
       verification.finishedAt = new Date().toISOString();
+      verification.capabilityMatrix = buildAgentCapabilityMatrix(agent, verification);
       this.persist(verification);
       if (handle) await environment.destroy(handle);
     }

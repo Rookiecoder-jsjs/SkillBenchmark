@@ -95,10 +95,13 @@ echo '{"type":"turn.completed","model":"codex-test","result":"SKILLBENCHMARK_CON
   assert.equal(verification?.receipt?.session_id, "verify-api");
   assert.equal(verification?.receipt?.input_tokens, 1);
   const verifiedAgents = await fetch(`${workbench.origin}/api/v1/agents`, { headers });
-  const verifiedCodex = (await verifiedAgents.json() as { agents: Array<{ id: string; authentication: string; evaluationSupport: string; lastVerification: { verificationId: string } | null }> }).agents.find((agent) => agent.id === "codex");
+  const verifiedCodex = (await verifiedAgents.json() as { agents: Array<{ id: string; authentication: string; evaluationSupport: string; lastVerification: { verificationId: string } | null; capabilityMatrix: Array<{ id: string; status: string; source: string }> }> }).agents.find((agent) => agent.id === "codex");
   assert.equal(verifiedCodex?.authentication, "ready");
   assert.equal(verifiedCodex?.evaluationSupport, "exploratory");
   assert.equal(verifiedCodex?.lastVerification?.verificationId, verificationStart.verificationId);
+  assert.equal(verifiedCodex?.capabilityMatrix.find((item) => item.id === "structured-output")?.status, "verified");
+  assert.equal(verifiedCodex?.capabilityMatrix.find((item) => item.id === "cost-receipt")?.status, "not-reported");
+  assert.equal(verifiedCodex?.capabilityMatrix.find((item) => item.id === "timeout-control")?.source, "adapter-conformance");
 
   const invalidVerification = await fetch(`${workbench.origin}/api/v1/agents/codex/verify`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ model: "bad model; echo no" }) });
   assert.equal(invalidVerification.status, 400);

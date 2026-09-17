@@ -44,9 +44,43 @@ test("subprocess adapter records reported model, session, usage and platform err
   assert.deepEqual(execution.receipt.platform_receipt, { requested_model: "claude-requested", reported_model: "claude-test-actual", session_id: "session-test" });
   assert.deepEqual(execution.receipt.usage, { input_tokens: 21, output_tokens: 8, estimated_cost: 0.0123 });
   assert.ok(execution.events.some((event) => event.kind === "platform.session" && event.data.model === "claude-test-actual"));
+  const rawEvents = execution.events.filter((event) => event.producer === "platform").map((event) => String(event.data.raw ?? "")).join("\n");
+  assert.doesNotMatch(rawEvents, /fixture-sensitive-token/);
+  assert.match(rawEvents, /\[redacted\]/);
+  assert.deepEqual(execution.events.find((event) => event.kind === "platform.result")?.data.usage, { input_tokens: 21, output_tokens: 8 }, "token counts are measurements, not credentials");
 
   const failed = await adapter.execute({ trial_id: "trial-error", run_id: "run", task_id: "task", profile_id: "claude", condition_id: "none", repeat_index: 1, attempt: 1 }, { task_id: "task", prompt: "PLATFORM_ERROR", mock_outputs: {} }, { environment: handle, model: "default", timeout_ms: 1000, load_method: "explicit-file-read", mode: "controlled" });
   assert.equal(failed.receipt.status, "errored", "a structured platform error must not become a successful Trial");
+  await environment.destroy(handle);
+});
+
+test("platform dialects normalize terminal, tool and failure events without inventing model identity", async () => {
+  const fakeRunner = resolve("tests/fixtures/fake-runner.mjs");
+  const environment = new LocalEnvironmentBackend(await mkdtemp(join(tmpdir(), "skillbenchmark-dialects-")));
+  const handle = await environment.provision({ trialId: "trial-dialects", conditionId: "none", publicInput: "dialects" });
+  const spec = { trial_id: "trial-dialects", run_id: "run", task_id: "task", profile_id: "platform", condition_id: "none" as const, repeat_index: 1, attempt: 1 };
+  const context = { environment: handle, model: "requested-model", timeout_ms: 1000, load_method: "explicit-file-read" as const, mode: "controlled" as const };
+
+  const codex = new SubprocessRunnerAdapter("codex", process.execPath, "codex", (prompt) => [fakeRunner, `CODEX_DIALECT ${prompt}`]);
+  const codexExecution = await codex.execute(spec, { task_id: "task", prompt: "answer", mock_outputs: {} }, context);
+  assert.equal(codexExecution.receipt.status, "completed");
+  assert.equal(codexExecution.receipt.artifact?.output, "real ok");
+  assert.deepEqual(codexExecution.receipt.platform_receipt, { requested_model: "requested-model", reported_model: null, session_id: "codex-thread-test" });
+  assert.deepEqual(codexExecution.receipt.usage, { input_tokens: 13, output_tokens: 5, estimated_cost: null });
+  assert.ok(codexExecution.events.some((event) => event.kind === "platform.tool"));
+  assert.ok(codexExecution.events.some((event) => event.kind === "platform.message"));
+
+  const claude = new SubprocessRunnerAdapter("claude", process.execPath, "claude-code", (prompt) => [fakeRunner, `CLAUDE_DIALECT ${prompt}`]);
+  const claudeExecution = await claude.execute({ ...spec, trial_id: "trial-claude-dialect" }, { task_id: "task", prompt: "answer", mock_outputs: {} }, context);
+  assert.equal(claudeExecution.receipt.status, "completed");
+  assert.equal(claudeExecution.receipt.platform_receipt?.reported_model, "claude-reported");
+  assert.equal(claudeExecution.receipt.platform_receipt?.session_id, "claude-session-test");
+  assert.ok(claudeExecution.events.some((event) => event.kind === "platform.tool"));
+
+  const failed = new SubprocessRunnerAdapter("codex", process.execPath, "codex", (prompt) => [fakeRunner, `CODEX_FAILED ${prompt}`]);
+  const failedExecution = await failed.execute({ ...spec, trial_id: "trial-codex-failed" }, { task_id: "task", prompt: "answer", mock_outputs: {} }, context);
+  assert.equal(failedExecution.receipt.status, "errored");
+  assert.ok(failedExecution.events.some((event) => event.kind === "platform.error"));
   await environment.destroy(handle);
 });
 

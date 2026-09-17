@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { WorkspaceAgentVerificationStore } from "../apps/local-server/src/agent-verification-store.ts";
+import { buildAgentCapabilityMatrix } from "../apps/local-server/src/agent-capabilities.ts";
 import { SubprocessRunnerAdapter } from "../packages/core/src/runner.ts";
 
 const installedAgent = {
@@ -36,11 +37,47 @@ test("agent verification persists an honest bounded connection receipt", async (
   assert.equal(completed.receipt?.session_id, "session-test");
   assert.equal(completed.receipt?.estimated_cost, 0.0123);
   assert.equal(completed.checks.exactOutput, true);
+  const matrix = new Map(completed.capabilityMatrix.map((capability) => [capability.id, capability]));
+  assert.equal(matrix.get("structured-output")?.status, "verified");
+  assert.equal(matrix.get("session-receipt")?.status, "verified");
+  assert.equal(matrix.get("model-receipt")?.status, "verified");
+  assert.equal(matrix.get("usage-receipt")?.status, "verified");
+  assert.equal(matrix.get("cost-receipt")?.status, "verified");
+  assert.equal(matrix.get("tool-events")?.status, "exploratory", "minimal connection verification does not exercise tools");
   await store.close();
 
   const reopened = new WorkspaceAgentVerificationStore(workspace, { adapterFactory: () => { throw new Error("must not execute while reading history"); } });
   assert.equal(reopened.latest("claude-code")?.verificationId, started.verificationId);
   await reopened.close();
+});
+
+test("capability matrix keeps discovery, connection and Adapter evidence scopes separate", () => {
+  const base = new Map(buildAgentCapabilityMatrix(installedAgent, null).map((capability) => [capability.id, capability]));
+  assert.equal(base.get("launch")?.status, "verified");
+  assert.equal(base.get("structured-output")?.status, "exploratory");
+  assert.equal(base.get("timeout-control")?.source, "adapter-conformance");
+  assert.match(base.get("timeout-control")?.detail ?? "", /不代表.*本机/i);
+
+  const codexVerification = {
+    verificationId: "agent-verification-00000000-0000-0000-0000-000000000000",
+    agentId: "codex",
+    status: "succeeded",
+    createdAt: "2026-09-17T00:00:00.000Z",
+    startedAt: "2026-09-17T00:00:00.000Z",
+    finishedAt: "2026-09-17T00:00:01.000Z",
+    requestedModel: "default",
+    authentication: "ready",
+    evaluationSupport: "exploratory",
+    checks: { exactOutput: true, structuredResult: true, isolatedWorkspace: true, toolEvents: false },
+    receipt: { requested_model: "default", reported_model: null, session_id: "codex-thread", input_tokens: 1, output_tokens: 1, estimated_cost: null },
+    capabilityMatrix: [],
+    error: null,
+  } as const;
+  const withoutOptionalReceipts = buildAgentCapabilityMatrix({ ...installedAgent, id: "codex", name: "Codex" }, codexVerification);
+  const matrix = new Map(withoutOptionalReceipts.map((capability) => [capability.id, capability]));
+  assert.equal(matrix.get("model-receipt")?.status, "not-reported");
+  assert.equal(matrix.get("cost-receipt")?.status, "not-reported");
+  assert.equal(matrix.get("tool-events")?.status, "exploratory");
 });
 
 test("agent verification distinguishes authentication failure from malformed output", async () => {

@@ -11,6 +11,7 @@ import { WorkspacePlanStore, type ExperimentType } from "./plan-store.ts";
 import { WorkspaceReleaseStore, type ReleasePlatform } from "./release-store.ts";
 import { WorkspaceRunStore } from "./run-store.ts";
 import { WorkspaceAgentVerificationStore, type AgentVerification } from "./agent-verification-store.ts";
+import { buildAgentCapabilityMatrix } from "./agent-capabilities.ts";
 
 export interface WorkbenchOptions {
   workspaceRoot: string;
@@ -118,12 +119,13 @@ function verificationInput(body: Record<string, unknown>): { model: string } {
   return { model: typeof body.model === "string" ? body.model : "default" };
 }
 
-function agentWithVerification(agent: AgentDiscovery, verification: AgentVerification | null): AgentDiscovery & { lastVerification: AgentVerification | null } {
+function agentWithVerification(agent: AgentDiscovery, verification: AgentVerification | null): AgentDiscovery & { lastVerification: AgentVerification | null; capabilityMatrix: ReturnType<typeof buildAgentCapabilityMatrix> } {
   return {
     ...agent,
     authentication: verification?.authentication ?? agent.authentication,
     evaluationSupport: agent.installation === "found" ? "exploratory" : agent.evaluationSupport,
     lastVerification: verification,
+    capabilityMatrix: buildAgentCapabilityMatrix(agent, verification),
   };
 }
 
