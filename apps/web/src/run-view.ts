@@ -111,8 +111,9 @@ export function formatDuration(value: number | null): string {
 
 export function buildRunDetailView(run: RunDetailSource, now = Date.now()) {
   const report = run.report;
+  const reportResults = (Array.isArray(report?.results) ? report.results : []).filter(completeTrial);
   const wallTimeMs = elapsed(run.startedAt, run.finishedAt ?? (run.startedAt ? new Date(now).toISOString() : null));
-  const trials = (report?.results ?? []).map((result) => ({
+  const trials = reportResults.map((result) => ({
     trialId: result.spec.trial_id,
     taskId: result.spec.task_id,
     condition: result.spec.condition_id,
@@ -126,7 +127,7 @@ export function buildRunDetailView(run: RunDetailSource, now = Date.now()) {
     failureReason: result.receipt.failure_reason,
   }));
   const aggregateTrialTimeMs = trials.reduce<number | null>((total, trial) => trial.durationMs === null ? total : (total ?? 0) + trial.durationMs, null);
-  const reportEvents = (report?.results ?? []).flatMap((result) => result.events);
+  const reportEvents = reportResults.flatMap((result) => Array.isArray(result.events) ? result.events : []);
   const liveEvents = run.events.flatMap((progress) => progress.event ? [progress.event] : []);
   const events = new Map<string, TraceEventLike>();
   for (const event of [...reportEvents, ...liveEvents]) events.set(event.event_id ?? `${event.trial_id}:${event.seq}:${event.kind}:${event.timestamp}`, event);
@@ -145,6 +146,25 @@ export function buildRunDetailView(run: RunDetailSource, now = Date.now()) {
 
 function comparableJson(value: unknown): string { return JSON.stringify(value); }
 
+function completeTrial(value: unknown): value is TrialLike {
+  if (!value || typeof value !== "object") return false;
+  const trial = value as Partial<TrialLike>;
+  return Boolean(
+    trial.spec
+    && typeof trial.spec.trial_id === "string"
+    && typeof trial.spec.task_id === "string"
+    && typeof trial.spec.profile_id === "string"
+    && typeof trial.spec.condition_id === "string"
+    && typeof trial.spec.repeat_index === "number"
+    && trial.receipt
+    && typeof trial.receipt.status === "string"
+    && trial.grade
+    && typeof trial.grade.outcome === "string"
+    && trial.grade.metrics
+    && typeof trial.grade.metrics.exact_match === "number",
+  );
+}
+
 function trialKey(result: TrialLike): string {
   return `${result.spec.task_id}|${result.spec.profile_id}|${result.spec.condition_id}|${result.spec.repeat_index}`;
 }
@@ -157,6 +177,11 @@ function scoredValue(result: TrialLike | undefined): number | null {
 export function buildRunComparison(leftRun: RunDetailSource, rightRun: RunDetailSource, leftPlan: ComparisonPlanSource, rightPlan: ComparisonPlanSource) {
   const reasons: string[] = [];
   if (!leftRun.report || !rightRun.report) reasons.push("最终报告缺失");
+  const leftRawResults = Array.isArray(leftRun.report?.results) ? leftRun.report.results : [];
+  const rightRawResults = Array.isArray(rightRun.report?.results) ? rightRun.report.results : [];
+  const leftCompleteResults = leftRawResults.filter(completeTrial);
+  const rightCompleteResults = rightRawResults.filter(completeTrial);
+  if (leftCompleteResults.length !== leftRawResults.length || rightCompleteResults.length !== rightRawResults.length) reasons.push("部分 Trial 证据不完整");
   if (leftPlan.suite.digest !== rightPlan.suite.digest) reasons.push("Suite 不一致");
   if (leftPlan.agent.id !== rightPlan.agent.id) reasons.push("Agent 不一致");
   if (leftPlan.agent.model !== rightPlan.agent.model) reasons.push("模型不一致");
@@ -170,8 +195,8 @@ export function buildRunComparison(leftRun: RunDetailSource, rightRun: RunDetail
   const skillChanged = Boolean(leftSkill?.treeDigest && rightSkill?.treeDigest && leftSkill.treeDigest !== rightSkill.treeDigest);
   const comparability = reasons.length ? "descriptive" as const : skillChanged ? "skill-effect" as const : "repeatability" as const;
 
-  const leftResults = new Map((leftRun.report?.results ?? []).map((result) => [trialKey(result), result]));
-  const rightResults = new Map((rightRun.report?.results ?? []).map((result) => [trialKey(result), result]));
+  const leftResults = new Map(leftCompleteResults.map((result) => [trialKey(result), result]));
+  const rightResults = new Map(rightCompleteResults.map((result) => [trialKey(result), result]));
   const keys = [...new Set([...leftResults.keys(), ...rightResults.keys()])].sort();
   const rows = keys.map((key) => {
     const left = leftResults.get(key);

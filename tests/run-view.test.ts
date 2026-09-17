@@ -88,3 +88,14 @@ test("run comparison becomes descriptive when model or Suite differs", () => {
   assert.ok(comparison.reasons.includes("模型不一致"));
   assert.equal(comparison.counts.improved, 1, "descriptive views may show observations without claiming causality");
 });
+
+test("run comparison degrades safely when historical Trial evidence is incomplete", () => {
+  const malformed = comparisonRun("run-malformed", [1]) as ReturnType<typeof comparisonRun>;
+  malformed.report.results = [{}] as typeof malformed.report.results;
+  const comparison = buildRunComparison(malformed, comparisonRun("run-valid", [1]), comparisonPlan(), comparisonPlan());
+
+  assert.equal(comparison.comparability, "descriptive");
+  assert.ok(comparison.reasons.includes("部分 Trial 证据不完整"));
+  assert.equal(comparison.rows.length, 1);
+  assert.equal(comparison.rows[0]?.change, "missing");
+});

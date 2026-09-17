@@ -5,11 +5,19 @@ import { randomUUID } from "node:crypto";
 import type { GateDecision, Release, SkillSnapshot } from "../../contracts/src/types.ts";
 import { importSkillSnapshot } from "./snapshot.ts";
 
+export interface RegistryEvent {
+  event: "published" | "rollback";
+  release_id: string;
+  timestamp: string;
+  from: string | null;
+  to: string;
+}
+
 interface RegistryState {
   current_digest: string | null;
   releases: Release[];
   sources: Record<string, string>;
-  events: { event: string; release_id: string; timestamp: string; from: string | null; to: string }[];
+  events: RegistryEvent[];
 }
 
 export class FileRegistry {
@@ -61,6 +69,10 @@ export class FileRegistry {
   }
 
   currentDigest(): string | null { return this.state.current_digest; }
+
+  listReleases(): Release[] { return this.state.releases.map((release) => ({ ...release, evaluation_refs: [...release.evaluation_refs], scope: [...release.scope] })); }
+
+  listEvents(): RegistryEvent[] { return this.state.events.map((event) => ({ ...event })); }
 
   async exportRelease(releaseId: string, platform: string, outputDir: string): Promise<{ release_id: string; platform: string; output_dir: string; skill_digest: string }> {
     const release = this.getRelease(releaseId);

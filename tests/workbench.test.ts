@@ -152,6 +152,16 @@ test("local workbench exposes authenticated same-origin workspace and discovery 
   assert.equal(await readFile(join(root, ".skillbenchmark", "runs", versionRun.runId, "skills", "incumbent", "SKILL.md"), "utf8"), "# API Skill\n");
   assert.equal(await readFile(join(root, ".skillbenchmark", "runs", versionRun.runId, "skills", "candidate", "SKILL.md"), "utf8"), "# API Skill\n\nVersion two.\n");
 
+  const releaseViewResponse = await fetch(`${workbench.origin}/api/v1/skills/${importedBody.skill.skillId}/releases`, { headers });
+  assert.equal(releaseViewResponse.status, 200);
+  const releaseView = await releaseViewResponse.json() as { currentDigest: string | null; releases: unknown[]; eligibleRuns: unknown[] };
+  assert.equal(releaseView.currentDigest, null);
+  assert.equal(releaseView.releases.length, 0);
+  assert.equal(releaseView.eligibleRuns.length, 0, "inconclusive fake runs must not be publishable");
+  const rejectedPublish = await fetch(`${workbench.origin}/api/v1/skills/${importedBody.skill.skillId}/releases`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ runId: versionRun.runId, expectedCurrentDigest: null }) });
+  assert.equal(rejectedPublish.status, 400);
+  assert.match((await rejectedPublish.json() as { error: string }).error, /accepted GateDecision/i);
+
   const invalidImport = await fetch(`${workbench.origin}/api/v1/skills/import`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ sourcePath: "" }) });
   assert.equal(invalidImport.status, 400);
   assert.ok(importedBody.version.versionId);

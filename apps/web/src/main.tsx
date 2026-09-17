@@ -27,6 +27,11 @@ interface WorkbenchPlan { planId: string; name: string; experimentType: "trial" 
 interface RunProgress { type: "trial.running" | "trace.event" | "trial.finished"; trial_id: string; timestamp: string; status?: string; event?: TraceEvent }
 interface WorkbenchRun { runId: string; planId: string; name: string; status: "queued" | "running" | "cancelling" | "completed" | "cancelled" | "failed"; createdAt: string; startedAt: string | null; finishedAt: string | null; trialCount: number; completedTrials: number; trialStatuses: Record<string, string>; events: RunProgress[]; error: string | null }
 interface WorkbenchRunDetail extends WorkbenchRun { report: RunReport | null }
+interface ReleaseRecord { release_id: string; skill_digest: string; evaluation_refs: string[]; scope: string[]; audit_status: "exploratory" | "verified"; timestamp: string; status: "published" | "superseded" }
+interface ReleaseItem { release: ReleaseRecord; isCurrent: boolean; version: { versionId: string; ordinal: number; label: string; treeDigest: string } | null }
+interface EligibleReleaseRun { runId: string; name: string; finishedAt: string; decisionId: string; candidateVersionId: string; candidateTreeDigest: string; suite: { label: string; digest: string }; agent: { id: string; name: string; model: string; evaluationSupport: string } }
+interface ReleaseView { skillId: string; currentDigest: string | null; releases: ReleaseItem[]; events: Array<{ event: "published" | "rollback"; release_id: string; timestamp: string; from: string | null; to: string }>; eligibleRuns: EligibleReleaseRun[] }
+interface ExportReceipt { release_id: string; platform: string; output_dir: string; skill_digest: string; exported_at: string }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -99,6 +104,10 @@ function App() {
   const [comparisonError, setComparisonError] = useState("");
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [diff, setDiff] = useState<VersionDiff | null>(null);
+  const [releaseView, setReleaseView] = useState<ReleaseView | null>(null);
+  const [releaseError, setReleaseError] = useState("");
+  const [releaseBusy, setReleaseBusy] = useState("");
+  const [exportReceipt, setExportReceipt] = useState<ExportReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -227,13 +236,53 @@ function App() {
   };
   const showSkill = async (skillId: string) => {
     setError("");
+    setReleaseError("");
+    setExportReceipt(null);
     try {
-      const next = await api<SkillDetail>(`/api/v1/skills/${skillId}`);
+      const [next, nextReleases] = await Promise.all([api<SkillDetail>(`/api/v1/skills/${skillId}`), api<ReleaseView>(`/api/v1/skills/${skillId}/releases`)]);
       setDetail(next);
+      setReleaseView(nextReleases);
       if (next.versions.length >= 2) {
         setDiff(await api<VersionDiff>(`/api/v1/skills/${skillId}/diff?from=${encodeURIComponent(next.versions[1].versionId)}&to=${encodeURIComponent(next.versions[0].versionId)}`));
       } else setDiff(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const refreshReleases = async (skillId: string) => {
+    setReleaseError("");
+    try { setReleaseView(await api<ReleaseView>(`/api/v1/skills/${skillId}/releases`)); }
+    catch (cause) { setReleaseError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const publishRelease = async (runId: string) => {
+    if (!detail || !releaseView) return;
+    setReleaseBusy(`publish:${runId}`);
+    setReleaseError("");
+    setExportReceipt(null);
+    try {
+      await api(`/api/v1/skills/${detail.skill.skillId}/releases`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ runId, expectedCurrentDigest: releaseView.currentDigest }) });
+      await refreshReleases(detail.skill.skillId);
+    } catch (cause) { setReleaseError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setReleaseBusy(""); }
+  };
+  const exportRelease = async (releaseId: string, platform: "codex" | "claude-code") => {
+    if (!detail) return;
+    setReleaseBusy(`export:${releaseId}:${platform}`);
+    setReleaseError("");
+    setExportReceipt(null);
+    try {
+      setExportReceipt(await api<ExportReceipt>(`/api/v1/skills/${detail.skill.skillId}/releases/${releaseId}/exports`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ platform }) }));
+    } catch (cause) { setReleaseError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setReleaseBusy(""); }
+  };
+  const rollbackRelease = async (item: ReleaseItem) => {
+    if (!detail || !releaseView?.currentDigest || item.isCurrent) return;
+    if (!window.confirm(`确认把当前发布指针回滚到 v${item.version?.ordinal ?? "?"}？历史版本和运行证据不会删除。`)) return;
+    setReleaseBusy(`rollback:${item.release.release_id}`);
+    setReleaseError("");
+    setExportReceipt(null);
+    try {
+      setReleaseView(await api<ReleaseView>(`/api/v1/skills/${detail.skill.skillId}/releases/${item.release.release_id}/rollback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedCurrentDigest: releaseView.currentDigest }) }));
+    } catch (cause) { setReleaseError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setReleaseBusy(""); }
   };
   const submitImport = async (event: FormEvent) => {
     event.preventDefault();
@@ -350,9 +399,19 @@ function App() {
           </button>)}
         </div>}
         {detail && <div className="version-panel">
-          <div className="version-panel-head"><div><span className="section-label">VERSION HISTORY</span><h3>{detail.skill.name}</h3></div><button className="secondary" onClick={() => showImport(detail.skill)}>导入新版本</button></div>
-          <div className="version-layout"><div className="version-list">{detail.versions.map((version) => <div className="version-row" key={version.versionId}><b>v{version.ordinal}</b><span><strong>{version.fileManifest.length} 个文件</strong><small>{version.treeDigest.slice(0, 12)} · {new Date(version.createdAt).toLocaleString()}</small></span></div>)}</div>
+          <div className="version-panel-head"><div><span className="section-label">VERSION HISTORY</span><h3>{detail.skill.name}</h3></div><div className="version-panel-actions"><button className="secondary" onClick={() => void refreshReleases(detail.skill.skillId)}>刷新发布证据</button><button className="secondary" onClick={() => showImport(detail.skill)}>导入新版本</button></div></div>
+          <div className="version-layout"><div className="version-list">{detail.versions.map((version) => <div className="version-row" key={version.versionId}><b>v{version.ordinal}</b><span><strong>{version.fileManifest.length} 个文件 {releaseView?.currentDigest === version.treeDigest && <em className="current-release-badge">CURRENT</em>}</strong><small>{version.treeDigest.slice(0, 12)} · {new Date(version.createdAt).toLocaleString()}</small></span></div>)}</div>
           <div className="diff-list"><h4>{diff ? `v${detail.versions[1]?.ordinal} → v${detail.versions[0]?.ordinal} 的变化` : "首个版本"}</h4>{diff?.files.length ? diff.files.map((file) => <div className="diff-row" key={file.path}><span className={`diff-status ${file.status}`}>{file.status === "added" ? "+" : file.status === "removed" ? "−" : "~"}</span><code>{file.path}</code><small>{file.status}</small></div>) : <p>没有可比较的历史版本。</p>}</div></div>
+          <section className="release-panel">
+            <div className="release-panel-head"><div><span className="section-label">EVIDENCE-BACKED RELEASES</span><h4>发布、导出与回滚</h4></div><code>{releaseView?.currentDigest ? `current ${releaseView.currentDigest.slice(0, 12)}` : "尚未发布"}</code></div>
+            {releaseError && <div className="error compact">{releaseError}</div>}
+            {exportReceipt && <div className="export-receipt"><span>导出完成 · {exportReceipt.platform}</span><code>{exportReceipt.output_dir}</code></div>}
+            <div className="release-columns">
+              <div className="eligible-releases"><h5>可发布证据</h5>{releaseView?.eligibleRuns.length ? releaseView.eligibleRuns.map((run) => <article key={run.runId}><div><strong>{run.name}</strong><small>{run.agent.name} · {run.agent.model === "default" ? "本机默认模型" : run.agent.model} · {run.suite.label}</small><code>{run.decisionId} · {run.candidateTreeDigest.slice(0, 12)}</code></div><button onClick={() => void publishRelease(run.runId)} disabled={Boolean(releaseBusy)}>{releaseBusy === `publish:${run.runId}` ? "发布中…" : "发布候选"}</button></article>) : <p>没有合格候选。只有完整且门禁为 accept 的版本对照 Run 会出现在这里。</p>}</div>
+              <div className="release-history"><h5>发布历史</h5>{releaseView?.releases.length ? releaseView.releases.map((item) => <article className={item.isCurrent ? "release-current" : ""} key={item.release.release_id}><div className="release-row-head"><strong>{item.version ? `v${item.version.ordinal}` : item.release.skill_digest.slice(0, 12)}</strong><span className={`pill ${item.isCurrent ? "success" : "muted"}`}>{item.isCurrent ? "CURRENT" : "SUPERSEDED"}</span></div><small>{new Date(item.release.timestamp).toLocaleString()} · {item.release.audit_status}</small><code>{item.release.evaluation_refs.join(" · ")}</code><div className="release-actions"><button className="secondary" onClick={() => void exportRelease(item.release.release_id, "codex")} disabled={Boolean(releaseBusy)}>导出 Codex</button><button className="secondary" onClick={() => void exportRelease(item.release.release_id, "claude-code")} disabled={Boolean(releaseBusy)}>导出 Claude</button>{!item.isCurrent && <button className="rollback-button" onClick={() => void rollbackRelease(item)} disabled={Boolean(releaseBusy)}>回滚到此版本</button>}</div></article>) : <p>还没有发布记录。发布不会修改导入源目录或 Agent 的日常配置。</p>}</div>
+            </div>
+            {releaseView && releaseView.events.length > 0 && <p className="release-audit">审计事件 {releaseView.events.length} 条 · 最近一次：{releaseView.events.at(-1)?.event}，{new Date(releaseView.events.at(-1)!.timestamp).toLocaleString()}</p>}
+          </section>
         </div>}
       </section>
       <section className="asset-section" id="suites">

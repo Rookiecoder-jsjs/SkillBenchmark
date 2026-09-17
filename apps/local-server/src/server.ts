@@ -8,6 +8,7 @@ import { discoverAgents, type AgentDiscovery, type AgentId } from "./discovery.t
 import { WorkspaceSkillStore } from "./skill-store.ts";
 import { publicSuiteVersion, WorkspaceSuiteStore } from "./suite-store.ts";
 import { WorkspacePlanStore, type ExperimentType } from "./plan-store.ts";
+import { WorkspaceReleaseStore, type ReleasePlatform } from "./release-store.ts";
 import { WorkspaceRunStore } from "./run-store.ts";
 
 export interface WorkbenchOptions {
@@ -95,6 +96,26 @@ function planInput(body: Record<string, unknown>): { name: string; experimentTyp
   return { name: body.name, experimentType: body.experimentType, suiteVersionId: body.suiteVersionId, incumbentVersionId: body.incumbentVersionId as string | undefined, candidateVersionId: body.candidateVersionId, agentId: body.agentId, model: body.model as string | undefined, repeats: body.repeats, timeoutMs: body.timeoutMs, concurrency: body.concurrency };
 }
 
+function publishReleaseInput(body: Record<string, unknown>): { runId: string; expectedCurrentDigest: string | null } {
+  if (typeof body.runId !== "string" || !/^run-[0-9a-f-]{36}$/.test(body.runId)) throw new Error("runId is invalid");
+  if (body.expectedCurrentDigest !== null && (typeof body.expectedCurrentDigest !== "string" || !/^[0-9a-f]{64}$/.test(body.expectedCurrentDigest))) throw new Error("expectedCurrentDigest must be a SHA-256 digest or null");
+  return { runId: body.runId, expectedCurrentDigest: body.expectedCurrentDigest };
+}
+
+function rollbackReleaseInput(body: Record<string, unknown>): { expectedCurrentDigest: string } {
+  if (typeof body.expectedCurrentDigest !== "string" || !/^[0-9a-f]{64}$/.test(body.expectedCurrentDigest)) throw new Error("expectedCurrentDigest must be a SHA-256 digest");
+  return { expectedCurrentDigest: body.expectedCurrentDigest };
+}
+
+function exportReleaseInput(body: Record<string, unknown>): { platform: ReleasePlatform } {
+  if (body.platform !== "codex" && body.platform !== "claude-code") throw new Error("platform must be codex or claude-code");
+  return { platform: body.platform };
+}
+
+function mutationErrorStatus(error: unknown): number {
+  return error instanceof Error && error.message.includes("current digest changed") ? 409 : 400;
+}
+
 export async function startLocalWorkbench(options: WorkbenchOptions): Promise<RunningWorkbench> {
   const host = options.host ?? "127.0.0.1";
   const token = randomBytes(32).toString("base64url");
@@ -107,6 +128,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
   let suiteStore: WorkspaceSuiteStore | null = null;
   let planStore: WorkspacePlanStore | null = null;
   let runStore: WorkspaceRunStore | null = null;
+  let releaseStore: WorkspaceReleaseStore | null = null;
   try {
     if (options.serveWebApp !== false) {
       vite = await createViteServer({
@@ -120,6 +142,7 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
     suiteStore = new WorkspaceSuiteStore(options.workspaceRoot);
     planStore = new WorkspacePlanStore(options.workspaceRoot);
     runStore = new WorkspaceRunStore(options.workspaceRoot, { planStore, suiteStore, skillStore });
+    releaseStore = new WorkspaceReleaseStore(options.workspaceRoot, { planStore, runStore, skillStore });
   } catch (error) {
     await runStore?.close();
     planStore?.close();
@@ -156,6 +179,30 @@ export async function startLocalWorkbench(options: WorkbenchOptions): Promise<Ru
           } catch (error) {
             return sendJson(response, 400, { error: error instanceof Error ? error.message : "Skill import failed" });
           }
+        }
+        const skillReleasesMatch = requestUrl.pathname.match(/^\/api\/v1\/skills\/(skill-[0-9a-f-]{36})\/releases$/);
+        if (request.method === "GET" && skillReleasesMatch) {
+          try { return sendJson(response, 200, await releaseStore!.getSkillReleases(skillReleasesMatch[1])); }
+          catch { return sendJson(response, 404, { error: "Skill not found" }); }
+        }
+        if (request.method === "POST" && skillReleasesMatch) {
+          try {
+            const result = await releaseStore!.publish(skillReleasesMatch[1], publishReleaseInput(await readJsonBody(request)));
+            return sendJson(response, 201, result);
+          } catch (error) { return sendJson(response, mutationErrorStatus(error), { error: error instanceof Error ? error.message : "Release publish failed" }); }
+        }
+        const releaseActionMatch = requestUrl.pathname.match(/^\/api\/v1\/skills\/(skill-[0-9a-f-]{36})\/releases\/(release-[0-9a-f-]{36})\/(exports|rollback)$/);
+        if (request.method === "POST" && releaseActionMatch?.[3] === "exports") {
+          try {
+            const input = exportReleaseInput(await readJsonBody(request));
+            return sendJson(response, 201, await releaseStore!.exportRelease(releaseActionMatch[1], releaseActionMatch[2], input.platform));
+          } catch (error) { return sendJson(response, mutationErrorStatus(error), { error: error instanceof Error ? error.message : "Release export failed" }); }
+        }
+        if (request.method === "POST" && releaseActionMatch?.[3] === "rollback") {
+          try {
+            const input = rollbackReleaseInput(await readJsonBody(request));
+            return sendJson(response, 200, await releaseStore!.rollback(releaseActionMatch[1], releaseActionMatch[2], input.expectedCurrentDigest));
+          } catch (error) { return sendJson(response, mutationErrorStatus(error), { error: error instanceof Error ? error.message : "Release rollback failed" }); }
         }
         const diffMatch = requestUrl.pathname.match(/^\/api\/v1\/skills\/(skill-[0-9a-f-]{36})\/diff$/);
         if (request.method === "GET" && diffMatch) {

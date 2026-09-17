@@ -92,6 +92,11 @@ export class WorkspaceRunStore {
 
   getRun(runId: string): WorkbenchRun { return this.read(runId); }
 
+  listCompletedRuns(): WorkbenchRun[] {
+    const rows = this.db.prepare("SELECT run_json FROM workspace_runs WHERE status = 'completed' ORDER BY created_at DESC LIMIT 100").all() as unknown as Array<{ run_json: string }>;
+    return rows.map((row) => JSON.parse(row.run_json) as WorkbenchRun);
+  }
+
   start(planId: string): WorkbenchRun {
     if (this.active.size > 0) throw new Error("Another run is active in this Workspace; cancel or wait for it before starting a new run");
     const frozen = this.planStore.getPlan(planId);

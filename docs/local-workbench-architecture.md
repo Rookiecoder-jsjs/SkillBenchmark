@@ -1,6 +1,6 @@
 # 本地可视化 Skill 评测工作台架构
 
-状态：实施中的目标架构，2026-09-16；工作台、Agent 探测、Skill/Suite 不可变资产、评测计划冻结，W2 的 Adapter 运行/事件/取消与结果详情，以及 W3 的历史运行对比和真实 v1/v2 版本对照切片已实现。真实账号一致性验证、统一工具事件和完整发布/回滚体验仍按本文推进。本文基于当前 v0.1 代码及用户的六项需求：本地启动网页、发现并复用本机 Agent、启动目录作为工作区、执行过程可视化、结果保存对比、Skill 版本管理。
+状态：实施中的目标架构，更新于 2026-09-17；工作台、Agent 探测、Skill/Suite 不可变资产、评测计划冻结，W2 的 Adapter 运行/事件/取消与结果详情，以及 W3 的历史运行对比、真实 v1/v2 版本对照和证据驱动发布/导出/回滚切片已实现。真实账号一致性验证、统一工具事件和完整 SQLite 发布/导出索引仍按本文推进。本文基于当前 v0.1 代码及用户的六项需求：本地启动网页、发现并复用本机 Agent、启动目录作为工作区、执行过程可视化、结果保存对比、Skill 版本管理。
 
 本文更新产品入口和工程交付方向；评测约束继续遵循[评测协议](evaluation-protocol.md)。旧版[架构](architecture.md)保留历史背景；涉及新领域对象、事件和接口时，以本文的设计为下一阶段实现依据，落地时同步更新[契约](contracts.md)。
 
@@ -261,7 +261,7 @@ UI 展示工具树与时间线，平台事件缺失时明确标为未知，不�
 | 过程事件 | `GET /runs/:id/events?after=...`、`GET /runs/:id/stream` | 历史分页和 SSE 实时补流 |
 | 证据对象 | `GET /artifacts/:id` | 校验对象归属、分页或下载 |
 | 比较 | `POST /comparisons` | 返回可比性诊断、指标与证据引用 |
-| 发布/导出 | `POST /releases`、`POST /exports`、`POST /releases/rollback` | 校验证据绑定、发布指针及导出目标 |
+| 发布/导出 | `GET/POST /skills/:skillId/releases`、`POST /skills/:skillId/releases/:releaseId/exports`、`POST /skills/:skillId/releases/:releaseId/rollback` | 当前首版校验证据绑定、每 Skill 指针和服务生成的受控导出目标 |
 
 相同幂等键和计划返回原 Run；相同键对应不同内容返回冲突。Run 状态变更使用版本号避免重复点击/并发标签页覆盖。请求不能直接传入任意 shell 字符串作为系统级执行命令，Adapter 使用结构化参数启动已选定的 CLI。
 
@@ -312,7 +312,7 @@ packages/
 | collect 返回路径，随后 destroy 删除目录 | 先保存文件产物、diff 与摘要，再清理 |
 | Scheduler 直接调用 exact-match，外部 Grader 是独立函数 | Grader 注册与冻结配置，接入独立评分 Worker |
 | trials 唯一约束缺 profile，重试结果覆盖同 trial | 迁移唯一键并分离 Trial 和 Attempt |
-| Skill 快照身份随内容改变；Registry 是全局 current 指针 | 稳定 Skill ID、不可变版本及每个 Skill 的发布指针 |
+| 稳定 Skill ID、不可变版本和每 Skill 文件 Registry 已实现 | 后续迁移为 SQLite Release/Export 资源、版本化迁移和跨进程写入协调 |
 | `evolve` 使用 mock，候选追加固定指导段落 | 保留明确的演示能力；真实分析/修改/再评测在后续接入 |
 | 已有超时、输出上限与进程树清理工具 | 复用并扩展为每 Run 所属进程管理、取消、独立监督与平台一致性测试 |
 
@@ -344,4 +344,4 @@ W1–W4 合起来覆盖用户本轮六项需求。W2 先形成可用的单平台
 
 优先验证的异常场景：Worker 同步忙循环、CLI 忽略终止信号、派生后台进程、输出洪泛、浏览器断连、数据库/磁盘写入失败、重复启动服务、两个 Run 同时取消其中一个、运行中服务退出、Skill 源目录变化。验收要求服务仍可响应、运行在预算内终止、历史证据不伪造，清理失败可见。
 
-交付界面示例数据必须标记 demo。W1 的工作台/Agent 探测、Skill 资产、Suite 资产与评测计划，W2 的 Adapter 运行监控和结果详情，以及 W3 的历史运行对比与 v1/v2 版本对照切片已改变程序行为并通过自动化与浏览器验收；详情区分 Run 墙钟与 Trial 累计耗时，对比在配置不一致时降级为描述性观察，版本门禁在证据不足时保持 inconclusive，并将平台未报告的信息保留为 unknown。fake CLI 结果只证明工程链路，真实平台效果仍须单独验证。
+交付界面示例数据必须标记 demo。W1 的工作台/Agent 探测、Skill 资产、Suite 资产与评测计划，W2 的 Adapter 运行监控和结果详情，以及 W3 的历史运行对比、v1/v2 版本对照和证据驱动发布/导出/回滚切片已改变程序行为并通过自动化与浏览器验收；详情区分 Run 墙钟与 Trial 累计耗时，对比在配置不一致或历史 Trial 证据不完整时降级为描述性观察，版本门禁在证据不足时保持 inconclusive，发布前重新验证完整矩阵并重算 Gate，回滚保留全部历史，将平台未报告的信息保留为 unknown。fake CLI 结果只证明工程链路，真实平台效果仍须单独验证。

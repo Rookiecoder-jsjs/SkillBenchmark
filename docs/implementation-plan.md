@@ -8,7 +8,7 @@ W1 前三条竖切片已实现：`npm run dev`/`ui` 启动回环地址上的 Rea
 
 W2 前两条竖切片已实现：运行服务从冻结计划生成独立 Run，按条件放置精确 SkillVersion，通过现有 Codex/Claude Adapter 和临时环境执行，增量保存 Trial/平台事件，支持超时、输出上限、AbortSignal 取消与子进程树清理。工作台轮询显示进度和事件，刷新后恢复历史。用户可选择 `default` 或填写 Agent 支持的测试模型 ID；模型写入 RunnerProfile、配置摘要、比较指纹和历史卡片。已保存 Run 可打开结果详情，查看条件成功率、效果差异、Run 墙钟、Trial 累计耗时、逐题评分/输出摘要和可展开的平台事件；带 Run ID 的页面刷新后会重新读取持久化报告。当前自动化与浏览器验收使用 fake Codex；平台事件仍以原始格式为主，真实账号、认证、统一工具语义和固定模型下的一致性验证仍待小预算实测。
 
-W3 前两条竖切片已实现：对比页可选择两次已完成 Run，按 `task_id | profile_id | condition_id | repeat_index` 配对，展示改进、回归、稳定通过/失败、缺失配对、条件指标和墙钟变化。Suite、Agent/模型、Runner 配置、条件、重复次数、预算或加载方式不一致时仅生成描述性观察；严格对齐后再区分 Skill 版本效果与相同 Skill 的重复性。评测计划现可选择同一 Skill 的两个不同版本，冻结 `none / incumbent / candidate` 三组条件；运行服务把两个不可变版本物化到独立目录，最终报告优先展示 `incumbent → candidate` 增益、回归和三态门禁。对比 Run ID 写入 URL，刷新后从持久化报告恢复。完整版本发布、证据关联和回滚 UI 仍待后续竖切片。
+W3 三条竖切片已实现：对比页可选择两次已完成 Run，按 `task_id | profile_id | condition_id | repeat_index` 配对，展示改进、回归、稳定通过/失败、缺失配对、条件指标和墙钟变化。Suite、Agent/模型、Runner 配置、条件、重复次数、预算或加载方式不一致时仅生成描述性观察；严格对齐后再区分 Skill 版本效果与相同 Skill 的重复性。评测计划可选择同一 Skill 的两个不同版本，冻结 `none / incumbent / candidate` 三组条件；运行服务把两个不可变版本物化到独立目录，最终报告优先展示 `incumbent → candidate` 增益、回归和三态门禁。对比 Run ID 写入 URL，刷新后从持久化报告恢复。Skill 详情现提供每个 Skill 独立的发布指针、Run/Decision 证据关联、Codex/Claude Code 受控导出与无损回滚；发布前重新校验完整 Trial 矩阵、冻结 Plan/Suite/候选摘要并重算 Gate，旧指针通过乐观锁防止并发覆盖。完整 SQLite Release/Export 资源和跨设备分发仍属后续增强。
 
 ## 当前实现进度
 
@@ -22,7 +22,7 @@ W3 前两条竖切片已实现：对比页可选择两次已完成 Run，按 `ta
 - P2 已实现 controlled/native/coexistence 的计划字段、加载方法、Profile 内统计和 Claude native 插件路径；Codex native 在能力不支持时明确拒绝。
 - P3 已实现 train/validation EvidenceView、Wiki 假设、父版本不变的候选快照、diff 和三态 validation gate。
 - P4 已实现本地 Registry 发布、导出收据、乐观并发检查、回滚、插件清单和 MCP JSON-RPC 桥接。
-- `tests/` 覆盖 40 个回归测试和 3 个 CLI 端到端测试。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
+- `tests/` 覆盖领域、工作台、发布和 CLI 端到端回归。mock 与 fake CLI 只用于工程验证，不能作为平台或模型效果结论。
 
 ## 1. 建议顺序
 
